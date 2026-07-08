@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1e3a5f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Digest">
+  <link rel="manifest" href="manifest.json">
+  <title>Morning Digest</title>
+  <style>
+    :root {
+      --bg: #f4f5f7; --card: #fff; --text: #1a1a1a; --muted: #6b7280;
+      --accent: #1e3a5f; --crit: #dc2626; --crit-bg: #fef2f2;
+      --tod: #d97706; --tod-bg: #fffbeb; --border: rgba(0,0,0,.07);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #111827; --card: #1f2937; --text: #f9fafb; --muted: #9ca3af;
+              --accent: #3b82f6; --crit-bg: #200f0f; --tod-bg: #1c1400; --border: rgba(255,255,255,.08); }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* ── Login ─────────────────────────────────────────────────── */
+    #login-screen { display: flex; flex-direction: column; align-items: center;
+                    justify-content: center; min-height: 100vh; gap: 20px;
+                    padding: 40px 24px; text-align: center; }
+    #login-screen h1 { font-size: 26px; font-weight: 700; }
+    #login-screen p  { color: var(--muted); font-size: 15px; max-width: 300px; line-height: 1.6; }
+    .btn-ms { background: #0078d4; color: #fff; border: none; border-radius: 10px;
+              padding: 14px 24px; font-size: 16px; font-weight: 600; cursor: pointer;
+              display: flex; align-items: center; gap: 10px; transition: background .15s; }
+    .btn-ms:hover { background: #106ebe; }
+
+    /* ── Header ────────────────────────────────────────────────── */
+    header { background: var(--accent); color: #fff;
+             padding: calc(env(safe-area-inset-top) + 14px) 16px 14px;
+             position: sticky; top: 0; z-index: 10; }
+    .hdr-row  { display: flex; justify-content: space-between; align-items: flex-start; }
+    .hdr-title { font-size: 18px; font-weight: 700; }
+    .hdr-sub   { font-size: 13px; opacity: .75; margin-top: 2px; }
+    .btn-refresh { background: rgba(255,255,255,.18); border: none; color: #fff;
+                   border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+    .btn-save { background: rgba(255,255,255,.18); border: none; color: #fff;
+                border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; transition: background .2s; }
+    .btn-save.saved { background: rgba(74,222,128,.35); }
+    .progress-row { margin-top: 10px; }
+    .progress-bar { height: 4px; border-radius: 99px; background: rgba(255,255,255,.25); overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 99px; background: #4ade80; transition: width .4s; }
+    .progress-label { font-size: 12px; opacity: .75; margin-top: 5px; }
+
+    /* ── Main ──────────────────────────────────────────────────── */
+    main { padding: 12px 12px calc(env(safe-area-inset-bottom) + 16px);
+           max-width: 680px; margin: 0 auto; }
+
+    /* ── Section ───────────────────────────────────────────────── */
+    .section { margin-bottom: 14px; border-radius: 12px; overflow: hidden;
+               box-shadow: 0 1px 3px rgba(0,0,0,.09); }
+    .sh { padding: 9px 14px; font-size: 11px; font-weight: 700;
+          text-transform: uppercase; letter-spacing: .08em; }
+    .sh-ovr   { background: #fef2f2; color: #b91c1c; border-bottom: 1px solid #fecaca; }
+    .sh-crit  { background: var(--crit-bg); color: var(--crit); border-bottom: 1px solid #fecaca; }
+    .sh-tod   { background: var(--tod-bg);  color: var(--tod);  border-bottom: 1px solid #fde68a; }
+    .sh-tmrw  { background: #fefce8; color: #854d0e; border-bottom: 1px solid #fef08a; }
+    .sh-eml   { background: #eff6ff; color: #1d4ed8; border-bottom: 1px solid #bfdbfe; }
+    .sh-cal   { background: #f5f3ff; color: #6d28d9; border-bottom: 1px solid #ddd6fe; }
+    .sh-cli   { background: #f0fdf4; color: #15803d; border-bottom: 1px solid #bbf7d0; }
+    .sh-teams { background: #eff6ff; color: #1e40af; border-bottom: 1px solid #bfdbfe; }
+    @media (prefers-color-scheme: dark) {
+      .sh-ovr   { background: #1a0505; color: #fca5a5; border-color: #450a0a; }
+      .sh-crit  { background: #1a0505; color: #f87171; border-color: #450a0a; }
+      .sh-tod   { background: #1a0e00; color: #fbbf24; border-color: #451a03; }
+      .sh-tmrw  { background: #1a1700; color: #facc15; border-color: #422006; }
+      .sh-eml   { background: #0c1a2e; color: #60a5fa; border-color: #1e3a5f; }
+      .sh-cal   { background: #150d2b; color: #a78bfa; border-color: #2e1065; }
+      .sh-cli   { background: #052e16; color: #4ade80; border-color: #14532d; }
+      .sh-teams { background: #0c1a2e; color: #93c5fd; border-color: #1e3a5f; }
+    }
+
+    /* ── Action items ──────────────────────────────────────────── */
+    .ai { display: flex; gap: 12px; padding: 12px 14px; background: var(--card);
+          border-bottom: 1px solid var(--border); cursor: pointer;
+          transition: opacity .2s; align-items: flex-start; -webkit-tap-highlight-color: transparent; }
+    .ai:last-child { border-bottom: none; }
+    .ai.done { opacity: .38; }
+    .chk { flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+           border: 2px solid #d1d5db; background: transparent; margin-top: 1px;
+           position: relative; transition: all .2s; pointer-events: none; }
+    .ai.done .chk { background: #22c55e; border-color: #22c55e; }
+    .ai.done .chk::after { content: '';
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10'%3E%3Cpath d='M1 5l3.5 3.5L11 1' stroke='white' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") center/13px no-repeat;
+      position: absolute; inset: 0; }
+    .it  { flex: 1; min-width: 0; }
+    .ttl { font-size: 14px; font-weight: 600; line-height: 1.4; }
+    .dtl { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+    .body-text { font-size: 13px; color: var(--text); margin-top: 6px; line-height: 1.6;
+                 padding-top: 6px; border-top: 1px solid var(--border); }
+    .carry { display: inline-block; background: #fee2e2; color: #b91c1c; font-size: 10px;
+             font-weight: 700; padding: 1px 5px; border-radius: 20px; margin-left: 5px;
+             text-transform: uppercase; letter-spacing: .04em; vertical-align: middle; }
+    .slot-time { font-size: 11px; color: #059669; margin-top: 3px; font-weight: 500; }
+    @media (prefers-color-scheme: dark) { .slot-time { color: #4ade80; } }
+
+    /* ── Verification badges ───────────────────────────────────── */
+    .vbadge { display: inline-block; font-size: 10px; font-weight: 600;
+              padding: 1px 6px; border-radius: 20px; margin-left: 6px; vertical-align: middle; }
+    .vbadge-verified   { background: #f0fdf4; color: #15803d; }
+    .vbadge-partial    { background: #fffbeb; color: #d97706; }
+    .vbadge-unverified { background: #fff7ed; color: #ea580c; }
+    @media (prefers-color-scheme: dark) {
+      .vbadge-verified   { background: #052e16; color: #4ade80; }
+      .vbadge-partial    { background: #1a0e00; color: #fbbf24; }
+      .vbadge-unverified { background: #1a0900; color: #fb923c; }
+    }
+
+    /* ── Email draft ───────────────────────────────────────────── */
+    .eml-draft { margin-top: 8px; }
+    .eml-draft summary { font-size: 12px; color: var(--accent); cursor: pointer;
+                         list-style: none; padding: 3px 0; }
+    .eml-draft summary::-webkit-details-marker { display: none; }
+    .eml-draft summary::before { content: '▶ '; font-size: 9px; }
+    details[open].eml-draft summary::before { content: '▼ '; }
+    .draft-body { font-size: 12px; color: var(--muted); background: var(--bg);
+                  border-radius: 6px; padding: 10px 12px; margin-top: 6px;
+                  border-left: 3px solid var(--accent); white-space: pre-wrap; line-height: 1.7; }
+
+    /* ── Non-interactive rows ──────────────────────────────────── */
+    .row { padding: 11px 14px; background: var(--card); border-bottom: 1px solid var(--border); }
+    .row:last-child { border-bottom: none; }
+    .row-day { font-size: 11px; font-weight: 700; text-transform: uppercase;
+               color: var(--muted); letter-spacing: .06em; padding: 7px 14px 3px;
+               background: var(--card); border-bottom: 1px solid var(--border); }
+    .mt-time { font-size: 12px; font-weight: 700; color: #7c3aed; }
+    .mt-name { font-size: 14px; font-weight: 600; margin-top: 2px; }
+    .mt-note { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    /* ── Meeting context accordion ─────────────────────────────── */
+    .mt-ctx { margin-top: 8px; }
+    .mt-ctx summary { font-size: 12px; color: var(--accent); cursor: pointer;
+                      list-style: none; padding: 2px 0; }
+    .mt-ctx summary::-webkit-details-marker { display: none; }
+    .mt-ctx summary::before { content: '▶ '; font-size: 9px; }
+    details[open].mt-ctx summary::before { content: '▼ '; }
+    .ctx-row { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
+    .ctx-row strong { color: var(--text); font-weight: 600; }
+    .ctx-row ul { margin: 4px 0 0 16px; }
+    .ctx-row li { margin-top: 3px; }
+
+    /* ── Teams ─────────────────────────────────────────────────── */
+    .tm-who  { font-size: 13px; font-weight: 700; color: #1e40af; }
+    .tm-msg  { font-size: 13px; margin-top: 2px; line-height: 1.5; }
+    .tm-ts   { font-size: 11px; color: var(--muted); margin-top: 1px; }
+    .tm-narrative { font-size: 13px; line-height: 1.7; color: var(--text); }
+
+    /* ── Client status ─────────────────────────────────────────── */
+    .cli-row { display: flex; gap: 10px; padding: 12px 14px; background: var(--card);
+               border-bottom: 1px solid var(--border); align-items: flex-start; }
+    .cli-row:last-child { border-bottom: none; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+    .d-r { background: #dc2626; } .d-y { background: #d97706; } .d-b { background: #2563eb; }
+    .d-g { background: #16a34a; } .d-gr { background: #6b7280; }
+    .cli-name { font-size: 14px; font-weight: 600; }
+    .bdg { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 5px;
+           border-radius: 20px; margin-left: 5px; text-transform: uppercase; }
+    .b-r { background: #fef2f2; color: #dc2626; } .b-y { background: #fffbeb; color: #d97706; }
+    .b-b { background: #eff6ff; color: #2563eb; } .b-g { background: #f0fdf4; color: #16a34a; }
+    .b-gr { background: #f9fafb; color: #6b7280; }
+    .cli-act  { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+    .cli-next { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    strong { font-weight: 600; }
+
+    /* ── Utility ───────────────────────────────────────────────── */
+    .hidden  { display: none !important; }
+    .empty   { padding: 14px; background: var(--card); color: var(--muted);
+               font-size: 13px; font-style: italic; }
+    #loading { display: flex; flex-direction: column; align-items: center;
+               justify-content: center; min-height: 55vh; gap: 14px; }
+    .spinner { width: 36px; height: 36px; border: 3px solid rgba(0,0,0,.1);
+               border-top-color: var(--accent); border-radius: 50%;
+               animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #error { padding: 20px; color: var(--crit); text-align: center; font-size: 14px; }
+    .footer { text-align: center; color: var(--muted); font-size: 11px; padding: 14px 0 6px; }
+
+    /* ── Tabs ──────────────────────────────────────────────────── */
+    .tabs { display: flex; gap: 6px; margin-top: 12px; }
+    .tab { flex: 1; text-align: center; background: rgba(255,255,255,.12); color: #fff;
+           border: none; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600;
+           cursor: pointer; opacity: .65; transition: opacity .15s, background .15s; }
+    .tab.active { opacity: 1; background: rgba(255,255,255,.28); }
+
+    /* ── Recap cards ───────────────────────────────────────────── */
+    .rc-intro { font-size: 12px; color: var(--muted); padding: 4px 2px 10px; }
+    .rc { background: var(--card); border-radius: 12px; margin-bottom: 14px; overflow: hidden;
+          box-shadow: 0 1px 3px rgba(0,0,0,.09); }
+    .rc-head { padding: 11px 14px; border-bottom: 1px solid var(--border); }
+    .rc-name { font-size: 15px; font-weight: 700; line-height: 1.3; }
+    .rc-meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .rc-to { font-size: 12px; color: var(--muted); margin-top: 5px; word-break: break-word; line-height: 1.5; }
+    .rc-to strong { color: var(--text); }
+    .rc-body { padding: 12px 14px; }
+    .rc-subj { width: 100%; font-size: 13px; font-weight: 600; color: var(--text);
+               background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+               padding: 8px 10px; margin-bottom: 8px; font-family: inherit; }
+    .rc-text { width: 100%; min-height: 180px; font-size: 13px; line-height: 1.6; color: var(--text);
+               background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+               padding: 10px 12px; font-family: inherit; resize: vertical; }
+    .rc-actions { display: flex; gap: 8px; padding: 0 14px 12px; }
+    .rc-btn { border: none; border-radius: 8px; padding: 10px; font-size: 13px; font-weight: 600;
+              cursor: pointer; transition: background .15s, opacity .15s; }
+    .rc-btn-primary { flex: 1; background: var(--accent); color: #fff; }
+    .rc-btn-primary:hover { opacity: .9; }
+    .rc-btn-primary.done { background: #16a34a; }
+    .rc-btn-primary:disabled { opacity: .6; cursor: default; }
+    .rc-btn-ghost { flex: 0 0 auto; background: transparent; color: var(--accent);
+                    border: 1px solid var(--border); padding: 10px 14px; }
+    .rc-status { font-size: 12px; padding: 0 14px 12px; line-height: 1.5; }
+    .rc-status.err { color: var(--crit); }
+    .rc-status.ok  { color: #16a34a; }
+  </style>
+</head>
+<body>
+
+<!-- ── Login screen ───────────────────────────────────────────── -->
+<div id="login-screen">
+  <div style="font-size:52px">☀️</div>
+  <h1>Morning Digest</h1>
+  <p>Sign in with your Mely.ai Microsoft account to load your daily action items.</p>
+  <button class="btn-ms" onclick="signIn()">
+    <svg width="20" height="20" viewBox="0 0 20 20">
+      <rect x="1" y="1" width="8.5" height="8.5" fill="#F25022"/>
+      <rect x="10.5" y="1" width="8.5" height="8.5" fill="#7FBA00"/>
+      <rect x="1" y="10.5" width="8.5" height="8.5" fill="#00A4EF"/>
+      <rect x="10.5" y="10.5" width="8.5" height="8.5" fill="#FFB900"/>
+    </svg>
+    Sign in with Microsoft
+  </button>
+</div>
+
+<!-- ── App screen ─────────────────────────────────────────────── -->
+<div id="app-screen" class="hidden">
+  <header>
+    <div class="hdr-row">
+      <div>
+        <div class="hdr-title" id="hdr-title">Morning Digest</div>
+        <div class="hdr-sub" id="hdr-date">Loading…</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn-refresh" onclick="refresh()">↻ Refresh</button>
+      </div>
+    </div>
+    <div class="tabs">
+      <button class="tab active" id="tab-digest" onclick="switchView('digest')">☀️ Digest</button>
+      <button class="tab" id="tab-recaps" onclick="switchView('recaps')">📝 Recaps</button>
+    </div>
+    <div class="progress-row hidden" id="progress-row">
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+      <div class="progress-label" id="progress-label"></div>
+    </div>
+  </header>
+
+  <div id="loading"><div class="spinner"></div><span style="color:var(--muted);font-size:14px">Loading your digest…</span></div>
+  <div id="error" class="hidden"></div>
+  <main id="content" class="hidden"></main>
+  <main id="recaps" class="hidden"></main>
+</div>
+
+<script type="module">
+import { PublicClientApplication } from 'https://esm.sh/@azure/msal-browser@2.38.3';
+
+// ── CONFIG ─────────────────────────────────────────────────────────────────
+const CLIENT_ID   = '6d312e2b-8697-4162-92c3-fb76ad4782da';
+const TENANT_ID   = 'add1a0bc-b68d-4df0-aefd-d9999f26df0c';
+const FOLDER      = 'Claude Main Folder/Apps/morning-digest-app/Daily json files';
+const RECAPS_FOLDER = FOLDER + '/Meeting Recap emails';  // Recaps tab reads/writes here
+// ──────────────────────────────────────────────────────────────────────────
+
+const SCOPES = ['User.Read', 'Files.ReadWrite'];
+const msalCfg = {
+  auth: { clientId: CLIENT_ID, authority: `https://login.microsoftonline.com/${TENANT_ID}`, redirectUri: window.location.origin },
+  cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: true }
+};
+let msalApp = null;
+let account = null;
+let currentDateKey = null;
+let view = 'digest';
+
+// ── Auth ───────────────────────────────────────────────────────────────────
+async function init() {
+  msalApp = new PublicClientApplication(msalCfg);
+  const resp = await msalApp.handleRedirectPromise().catch(() => null);
+  if (resp?.account) { account = resp.account; msalApp.setActiveAccount(account); showApp(); loadDigest(); return; }
+  const all = msalApp.getAllAccounts();
+  if (all.length) { account = all[0]; msalApp.setActiveAccount(account); showApp(); loadDigest(); }
+}
+
+async function signIn() {
+  try {
+    if (!msalApp) msalApp = new PublicClientApplication(msalCfg);
+    const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent) || window.matchMedia('(display-mode: standalone)').matches;
+    if (isMobile) { await msalApp.loginRedirect({ scopes: SCOPES }); return; }
+    const r = await msalApp.loginPopup({ scopes: SCOPES });
+    account = r.account; msalApp.setActiveAccount(account); showApp(); loadDigest();
+  } catch (e) { if (e.errorCode !== 'user_cancelled') alert('Sign-in failed: ' + e.message); }
+}
+
+window.signIn = signIn;
+window.loadDigest = () => loadDigest();
+
+// ── View switching ──────────────────────────────────────────────────────────
+function refresh() { view === 'recaps' ? loadRecaps() : loadDigest(); }
+function switchView(v) {
+  view = v;
+  document.getElementById('tab-digest').classList.toggle('active', v === 'digest');
+  document.getElementById('tab-recaps').classList.toggle('active', v === 'recaps');
+  document.getElementById('hdr-title').textContent = v === 'recaps' ? 'Meeting Recaps' : 'Morning Digest';
+  document.getElementById('progress-row').classList.add('hidden');
+  document.getElementById('error').classList.add('hidden');
+  if (v === 'digest') { document.getElementById('recaps').classList.add('hidden'); loadDigest(); }
+  else { document.getElementById('content').classList.add('hidden'); loadRecaps(); }
+}
+window.refresh = refresh;
+window.switchView = switchView;
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function showApp() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app-screen').classList.remove('hidden');
+}
+
+async function token() {
+  try { return (await msalApp.acquireTokenSilent({ scopes: SCOPES, account })).accessToken; }
+  catch {
+    const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent) || window.matchMedia('(display-mode: standalone)').matches;
+    if (isMobile) { await msalApp.acquireTokenRedirect({ scopes: SCOPES }); return; }
+    return (await msalApp.acquireTokenPopup({ scopes: SCOPES })).accessToken;
+  }
+}
+
+// ── Graph API ──────────────────────────────────────────────────────────────
+async function graph(method, path, body) {
+  const t = await token();
+  const opts = { method, headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' } };
+  if (body !== undefined) opts.body = typeof body === 'string' ? body : JSON.stringify(body);
+  const r = await fetch(`https://graph.microsoft.com/v1.0${path}`, opts);
+  if (!r.ok) { if (r.status === 404) return null; throw new Error(`Graph ${r.status}: ${path}`); }
+  if (r.status === 204) return null;
+  return r.headers.get('content-type')?.includes('json') ? r.json() : r.text();
+}
+
+// ── State persistence ──────────────────────────────────────────────────────
+const STATE_URI = `/me/drive/root:/${FOLDER}/digest-state.json:/content`;
+let state = {};
+
+async function loadState() {
+  try { const raw = await graph('GET', STATE_URI); state = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {}; }
+  catch { state = {}; }
+}
+
+async function saveState() {
+  await graph('PUT', STATE_URI, JSON.stringify(state));
+}
+
+function isDone(dateKey, id) { return !!(state[dateKey]?.[id]); }
+
+async function toggle(dateKey, id, el) {
+  if (!state[dateKey]) state[dateKey] = {};
+  state[dateKey][id] = !state[dateKey][id];
+  el.classList.toggle('done', state[dateKey][id]);
+  refreshProgress(dateKey);
+  await saveState();
+  await saveDoneFile(dateKey);
+}
+
+function refreshProgress(dateKey) {
+  const items = document.querySelectorAll('.ai[data-id]');
+  if (!items.length) return;
+  const done = [...items].filter(el => isDone(dateKey, el.dataset.id)).length;
+  const total = items.length;
+  const pct = Math.round((done / total) * 100);
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-label').textContent = `${done} of ${total} items done`;
+  document.getElementById('progress-row').classList.remove('hidden');
+}
+
+// ── Load digest ────────────────────────────────────────────────────────────
+async function loadDigest() {
+  const loading = document.getElementById('loading');
+  const content = document.getElementById('content');
+  const errEl   = document.getElementById('error');
+  loading.classList.remove('hidden');
+  content.classList.add('hidden');
+  errEl.classList.add('hidden');
+  document.getElementById('progress-row').classList.add('hidden');
+
+  try {
+    const folder = await graph('GET', `/me/drive/root:/${FOLDER}:/children?$select=name,id,lastModifiedDateTime&$top=100`);
+    const files  = folder?.value ?? [];
+
+    const digestFiles = files
+      .filter(f => /^digest-\d{4}-\d{2}-\d{2}\.json$/.test(f.name))
+      .sort((a, b) => b.name.localeCompare(a.name));
+
+    if (!digestFiles.length) {
+      showError(`No digest found in the Claude Dashboard folder in OneDrive.<br><br>
+        <button class="btn-ms" style="margin:10px auto;display:inline-flex;" onclick="window.seedTestDigest()">
+          📝 Create a test digest
+        </button><br>
+        <span style="font-size:12px;color:var(--muted)">Or run the morning digest skill to generate a real one.</span>`);
+      return;
+    }
+
+    const latest = digestFiles[0];
+    const dateKey = latest.name.replace('digest-', '').replace('.json', '');
+    const raw     = await graph('GET', `/me/drive/items/${latest.id}/content`);
+    const data    = typeof raw === 'string' ? JSON.parse(raw) : raw;
+
+    const yd = new Date(dateKey + 'T12:00:00');
+    yd.setDate(yd.getDate() - 1);
+    const ydKey = yd.toISOString().slice(0, 10);
+
+    await loadState();
+
+    document.getElementById('hdr-date').textContent = data.date || dateKey;
+    content.innerHTML = renderDigest(data, dateKey, state[ydKey] || {});
+
+    // Wire up checkable items — stop propagation on accordion details
+    content.querySelectorAll('.ai[data-id]').forEach(el => {
+      if (isDone(dateKey, el.dataset.id)) el.classList.add('done');
+      el.addEventListener('click', () => toggle(dateKey, el.dataset.id, el));
+    });
+    content.querySelectorAll('.ai details').forEach(d => {
+      d.addEventListener('click', e => e.stopPropagation());
+    });
+
+    currentDateKey = dateKey;
+    refreshProgress(dateKey);
+    loading.classList.add('hidden');
+    content.classList.remove('hidden');
+
+  } catch (e) {
+    console.error(e);
+    showError('Error loading digest: ' + e.message);
+  }
+}
+
+function showError(msg) {
+  document.getElementById('loading').classList.add('hidden');
+  const el = document.getElementById('error');
+  el.innerHTML = msg; el.classList.remove('hidden');
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function renderDigest(data, dateKey, ydState) {
+  const s = data.sections || {};
+
+  const d = new Date(dateKey + 'T12:00:00');
+  const isFriday = d.getDay() === 5;
+  const tmrwLabel = isFriday ? '🟡 Before Monday EOD' : '🟡 Due Tomorrow';
+
+  let html = '';
+
+  // New flat todos[] format with priority field
+  if (s.todos?.length) {
+    const crit = s.todos.filter(t => t.priority === 'critical');
+    const high = s.todos.filter(t => t.priority === 'high');
+    const norm = s.todos.filter(t => t.priority === 'normal');
+    if (crit.length) html += renderSection('crit', '🚨 Critical — Act Now', crit, dateKey, ydState, 'action');
+    if (high.length) html += renderSection('tod',  '🔴 Due Today',          high, dateKey, ydState, 'action');
+    if (norm.length) html += renderSection('tmrw', tmrwLabel,               norm, dateKey, ydState, 'action');
+  } else {
+    // Legacy format: separate arrays per priority band
+    if (s.overdue?.length)  html += renderSection('ovr',  '⚠️ Overdue / Past Due', s.overdue,  dateKey, ydState, 'action');
+    if (s.critical?.length) html += renderSection('crit', '🚨 Critical — Act Now', s.critical, dateKey, ydState, 'action');
+    if (s.today?.length)    html += renderSection('tod',  '🔴 Due Today',          s.today,    dateKey, ydState, 'action');
+    if (s.tomorrow?.length) html += renderSection('tmrw', tmrwLabel,              s.tomorrow, dateKey, ydState, 'action');
+  }
+
+  if (s.emails?.length)   html += renderSection('eml',   '✉️ Emails to Reply', s.emails,  dateKey, ydState, 'email');
+  if (s.meetings?.length) html += renderMeetingsSection(s.meetings);
+  if (s.teams?.length)    html += renderSection('teams', '💬 Teams Updates',   s.teams,   dateKey, ydState, 'teams');
+  if (s.clients?.length)  html += renderSection('cli',   '🏢 Client Status',   s.clients, dateKey, ydState, 'client');
+
+  html += `<div class="footer">Generated by Claude · ${data.date || dateKey}</div>`;
+  return html;
+}
+
+function formatDay(day) {
+  if (day === 'TODAY')    return 'Today';
+  if (day === 'TOMORROW') return 'Tomorrow';
+  return day; // THU, WED, FRI, MON, etc.
+}
+
+function renderMeetingsSection(meetings) {
+  let body = '';
+  let lastDay = null;
+  meetings.forEach(item => {
+    if (item.day && item.day !== lastDay) {
+      body += `<div class="row-day">${formatDay(item.day)}</div>`;
+      lastDay = item.day;
+    }
+    // talkingPoints (new format) or context.agenda (legacy)
+    const points = item.talkingPoints?.length
+      ? item.talkingPoints
+      : (item.context?.agenda || []);
+    const pointsHtml = points.length
+      ? `<ul style="margin:6px 0 2px 16px;list-style:disc">${points.map(p => `<li style="font-size:12px;color:var(--muted);line-height:1.5;margin-top:3px">${esc(p)}</li>`).join('')}</ul>`
+      : '';
+    // Legacy context extras (lastMeeting/sinceThen) — only shown if no talkingPoints
+    let legacyCtx = '';
+    if (!item.talkingPoints?.length && item.context && (item.context.lastMeeting || item.context.sinceThen)) {
+      legacyCtx = `<details class="mt-ctx">
+        <summary>Context</summary>
+        ${item.context.lastMeeting ? `<div class="ctx-row"><strong>Last meeting:</strong> ${esc(item.context.lastMeeting)}</div>` : ''}
+        ${item.context.sinceThen   ? `<div class="ctx-row"><strong>Since then:</strong> ${esc(item.context.sinceThen)}</div>` : ''}
+      </details>`;
+    }
+    body += `<div class="row">
+      <div class="mt-time">${esc(item.time || '')}</div>
+      <div class="mt-name">${esc(item.title || '')}</div>
+      ${item.note ? `<div class="mt-note">${esc(item.note)}</div>` : ''}
+      ${pointsHtml}${legacyCtx}
+    </div>`;
+  });
+  return `<div class="section"><div class="sh sh-cal">📅 Upcoming Meetings</div>${body || '<div class="empty">Nothing here.</div>'}</div>`;
+}
+
+function renderSection(cls, label, items, dateKey, ydState, type) {
+  const body = items.map(item => renderItem(item, dateKey, ydState, type)).join('');
+  return `<div class="section"><div class="sh sh-${cls}">${label}</div>${body || '<div class="empty">Nothing here.</div>'}</div>`;
+}
+
+function vbadgeLabel(v) {
+  if (v === 'verified')   return '✅ Verified';
+  if (v === 'partial')    return '🔍 Partially verified';
+  if (v === 'unverified') return '⚠️ Unverified';
+  return v;
+}
+
+function renderItem(item, dateKey, ydState, type) {
+
+  // ── Meeting ──────────────────────────────────────────────────
+  if (type === 'meeting') {
+    const ctx = item.context;
+    let ctxHtml = '';
+    if (ctx && (ctx.lastMeeting || ctx.sinceThen || ctx.agenda?.length)) {
+      const agendaItems = ctx.agenda?.length
+        ? `<div class="ctx-row"><strong>Suggested agenda:</strong><ul>${ctx.agenda.map(a => `<li>${a}</li>`).join('')}</ul></div>`
+        : '';
+      ctxHtml = `<details class="mt-ctx">
+        <summary>Context &amp; agenda</summary>
+        ${ctx.lastMeeting ? `<div class="ctx-row"><strong>Last meeting:</strong> ${ctx.lastMeeting}</div>` : ''}
+        ${ctx.sinceThen   ? `<div class="ctx-row"><strong>Since then:</strong> ${ctx.sinceThen}</div>`    : ''}
+        ${agendaItems}
+      </details>`;
+    }
+    return `<div class="row">
+      ${item.day ? `<div class="row-day">${item.day}</div>` : ''}
+      <div class="mt-time">${item.time || ''}</div>
+      <div class="mt-name">${item.title || ''}</div>
+      ${item.note ? `<div class="mt-note">${item.note}</div>` : ''}
+      ${ctxHtml}
+    </div>`;
+  }
+
+  // ── Client ───────────────────────────────────────────────────
+  if (type === 'client') {
+    const m = {
+      critical:          ['d-r','b-r','Critical'],
+      'needs-attention': ['d-y','b-y','Needs Attention'],
+      'in-progress':     ['d-b','b-b','In Progress'],
+      'on-track':        ['d-g','b-g','On Track'],
+      waiting:           ['d-gr','b-gr','Waiting']
+    };
+    const [dc, bc, lbl] = m[item.status] || ['d-gr','b-gr','Unknown'];
+    return `<div class="cli-row">
+      <div class="dot ${dc}"></div>
+      <div style="flex:1">
+        <div class="cli-name">${item.name || ''}<span class="bdg ${bc}">${lbl}</span></div>
+        ${item.activity      ? `<div class="cli-act"><strong>Latest activity:</strong> ${item.activity}</div>`        : ''}
+        ${item.currentStatus ? `<div class="cli-next"><strong>Current status:</strong> ${item.currentStatus}</div>` : ''}
+        ${item.nextStep      ? `<div class="cli-next"><strong>Next steps:</strong> ${item.nextStep}</div>`           : ''}
+      </div>
+    </div>`;
+  }
+
+  // ── Teams ────────────────────────────────────────────────────
+  if (type === 'teams') {
+    if (item.narrative) {
+      return `<div class="row"><div class="tm-narrative">${item.narrative}</div></div>`;
+    }
+    return `<div class="row">
+      <span class="tm-who">${item.person || ''}</span>
+      ${item.time ? `<span class="tm-ts" style="margin-left:6px">${item.time}</span>` : ''}
+      <div class="tm-msg">${item.text || ''}</div>
+    </div>`;
+  }
+
+  // ── Email (checkable, with optional draft) ───────────────────
+  if (type === 'email') {
+    const carried    = item.carried || (ydState.hasOwnProperty(item.id) && !ydState[item.id]);
+    const bodyText   = item.body || item.detail || '';
+    const vbadge     = item.verification ? `<span class="vbadge vbadge-${item.verification}">${vbadgeLabel(item.verification)}</span>` : '';
+    const draftHtml  = item.draft
+      ? `<details class="eml-draft"><summary>Suggested reply</summary><div class="draft-body">${item.draft.replace(/\n/g, '<br>')}</div></details>`
+      : '';
+    return `<div class="ai" data-id="${item.id}">
+      <div class="chk"></div>
+      <div class="it">
+        <div class="ttl">${item.title || ''}${carried ? '<span class="carry">Carried over</span>' : ''}${vbadge}</div>
+        ${bodyText   ? `<div class="dtl">${bodyText}</div>`       : ''}
+        ${draftHtml}
+      </div>
+    </div>`;
+  }
+
+  // ── Action item (default — checkable) ────────────────────────
+  const carried   = item.carried || (ydState.hasOwnProperty(item.id) && !ydState[item.id]);
+  const bodyText  = item.body || item.detail || '';
+  const vbadge    = item.verification ? `<span class="vbadge vbadge-${item.verification}">${vbadgeLabel(item.verification)}</span>` : '';
+  return `<div class="ai" data-id="${item.id}">
+    <div class="chk"></div>
+    <div class="it">
+      <div class="ttl">${item.title || ''}${carried ? '<span class="carry">Carried over</span>' : ''}${vbadge}</div>
+      ${bodyText ? `<div class="dtl">${bodyText}</div>` : ''}
+      ${item.suggestedSlot ? `<div class="slot-time">🕐 ${esc(item.suggestedSlot)}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+// ── Seed test data ─────────────────────────────────────────────────────────
+async function seedTestDigest() {
+  const today = new Date().toISOString().slice(0, 10);
+  const days   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const d = new Date(today + 'T12:00:00');
+  const dateLabel = `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+
+  const sample = {
+    date: dateLabel,
+    sections: {
+      overdue: [
+        { id: "ovr-test-1", title: "Reply to Mantoria — FedEx LVS samples", verification: "verified",
+          detail: "Adriana Mendez · 6 days without acknowledgment",
+          body: "Adriana sent FedEx Express and Ground LVS sample PDFs on June 3. Both emails remain unread, no reply found in sent items after full search." }
+      ],
+      today: [
+        { id: "tod-test-1", title: "Project manage Willson → Descartes integration", verification: "partial",
+          detail: "Edward assigned this Jun 8 · Target go-live June 15",
+          body: "Contact Descartes (Daniel) and track mapping items: CI Date, PO Date, Sales UOM, Stat UOM, Carrier Phone Number. Readiness test proposed for Friday June 13 at 11 AM." },
+        { id: "tod-test-2", title: "Post release notes and update Pulse", verification: "verified",
+          detail: "Edward asked where weekend release notes are" }
+      ],
+      emails: [
+        { id: "eml-test-1", title: "Adriana Mendez (Mantoria) — FedEx LVS samples", verification: "partial",
+          detail: "June 3 · Sent Air + Ground LVS PDFs, asked to note CCN structure difference",
+          draft: "Hi Adriana,\n\nThank you for sending over both the FedEx Express and FedEx Ground LVS samples — received and noted on the CCN structure difference between the two modes.\n\nI will review the files and follow up with you shortly.\n\nAll the best,\nNicolas" }
+      ],
+      meetings: [
+        { id: "cal-test-1", day: "TODAY", time: "1:30–2:30 PM EDT", title: "1 Week testing recap // HTC x Mely",
+          note: "Teams call",
+          context: { lastMeeting: "No prior tldv notes found.", sinceThen: "No recent email thread found with HTC contacts.",
+                     agenda: ["Review first week of extraction results", "Identify accuracy issues or edge cases", "Define next steps for onboarding"] } },
+        { id: "cal-test-2", day: "TOMORROW", time: "1:00–1:30 PM EDT", title: "Onboarding Kick-off // KWE x Mely",
+          note: "Margaret Plewa, Charlene Cizek, Jack Hood, Lori Ebbett + team",
+          context: { lastMeeting: "First meeting — no prior history.", sinceThen: "Margaret confirmed invoice goes to her. Edward sent welcome email.",
+                     agenda: ["Welcome KWE team", "Platform orientation", "Confirm primary use cases and document types", "Set up user accounts"] } }
+      ],
+      teams: [
+        { id: "teams-test-1", narrative: "Platform outage hit around 4–5 PM EDT — PCB uploaded a 500-page file 10 times and jammed the processing queue. Hoang and Tyler worked through it; queue was cleared and status page posted by ~5 PM EDT. J.B. Ellis and Courtney confirmed resolution by end of evening." },
+        { id: "teams-test-2", narrative: "Edward posted the V4 Executive Summary / Product Roadmap at 1:30 AM: transitioning Mely from a template-driven extraction platform (V3.5) to an intelligent validation platform (V4). Kevin Lai posted 'Updated Doc to be Reviewed' at 4:15 AM — likely the ticket system doc from his three-day build." }
+      ],
+      clients: [
+        { id: "cli-test-1", name: "Ardo", status: "in-progress",
+          activity: "Christophe acknowledged Gantt v3, well-received. In-person meeting today at 9 AM.",
+          currentStatus: "Discovery wrapping up; SAP integration scoping in progress.",
+          nextStep: "Confirm quick wins being delivered this week. SAP integration is the critical path." },
+        { id: "cli-test-2", name: "Willson International", status: "needs-attention",
+          activity: "Readiness review Jun 8 — John gave green light. Nick assigned to project manage Descartes coordination.",
+          currentStatus: "Pre-go-live; field mappings unresolved with Descartes.",
+          nextStep: "Contact Descartes (Daniel), resolve field mappings, target June 15 go-live." },
+        { id: "cli-test-3", name: "Border Brokers", status: "on-track",
+          activity: "Mike, Sarah, and Macfarlane accepted Training and Go-Live invites. Column mapping confirmed working.",
+          currentStatus: "Training complete; go-live green light call Thursday.",
+          nextStep: "Deliver training today 3:30 PM. Go-live green light call Thursday." }
+      ]
+    }
+  };
+
+  try {
+    const uri = `/me/drive/root:/${FOLDER}/digest-${today}.json:/content`;
+    await graph('PUT', uri, JSON.stringify(sample, null, 2));
+    await loadDigest();
+  } catch (e) {
+    alert('Could not write to OneDrive: ' + e.message);
+  }
+}
+
+window.seedTestDigest = seedTestDigest;
+
+// ── Recaps tab ───────────────────────────────────────────────────────────────
+let RECAPS = [];
+
+async function loadRecaps() {
+  const loading = document.getElementById('loading');
+  const recaps  = document.getElementById('recaps');
+  const errEl   = document.getElementById('error');
+  document.getElementById('content').classList.add('hidden');
+  loading.classList.remove('hidden');
+  recaps.classList.add('hidden');
+  errEl.classList.add('hidden');
+
+  try {
+    const folder = await graph('GET', `/me/drive/root:/${RECAPS_FOLDER}:/children?$select=name,id,lastModifiedDateTime&$top=100`);
+    const files  = folder?.value ?? [];
+
+    const recapFiles = files
+      .filter(f => /^recaps-\d{4}-\d{2}-\d{2}\.json$/.test(f.name))
+      .sort((a, b) => b.name.localeCompare(a.name));
+
+    if (!recapFiles.length) {
+      showError(`No meeting recaps found yet.<br><br>
+        <button class="btn-ms" style="margin:10px auto;display:inline-flex;" onclick="window.seedTestRecaps()">
+          📝 Create a test recap
+        </button><br>
+        <span style="font-size:12px;color:var(--muted)">Or wait for the 4 PM end-of-day recap task to run.</span>`);
+      return;
+    }
+
+    const latest  = recapFiles[0];
+    const dateKey = latest.name.replace('recaps-', '').replace('.json', '');
+    const raw     = await graph('GET', `/me/drive/items/${latest.id}/content`);
+    const data    = typeof raw === 'string' ? JSON.parse(raw) : raw;
+
+    document.getElementById('hdr-date').textContent = data.date || dateKey;
+    recaps.innerHTML = renderRecaps(data);
+    loading.classList.add('hidden');
+    recaps.classList.remove('hidden');
+
+  } catch (e) {
+    console.error(e);
+    showError('Error loading recaps: ' + e.message);
+  }
+}
+
+function renderRecaps(data) {
+  const meetings = data.meetings || [];
+  RECAPS = meetings;
+
+  if (!meetings.length) {
+    return `<div class="section"><div class="empty">No client meetings to recap for ${esc(data.date || '')}.</div></div>`;
+  }
+
+  let html = `<div class="rc-intro">${meetings.length} client meeting${meetings.length > 1 ? 's' : ''} · review, edit, then create an Outlook draft.</div>`;
+  html += meetings.map((m, i) => {
+    const to       = (m.attendees || []).join(', ');
+    const subject  = m.subject || ('Recap: ' + (m.name || ''));
+    return `<div class="rc">
+      <div class="rc-head">
+        <div class="rc-name">${esc(m.name || 'Meeting')}</div>
+        ${m.time ? `<div class="rc-meta">${esc(m.time)}</div>` : ''}
+        <div class="rc-to"><strong>To:</strong> ${to ? esc(to) : '<span style="color:var(--crit)">no attendee emails found — add them in Outlook</span>'}</div>
+      </div>
+      <div class="rc-body">
+        <input class="rc-subj" id="subj-${i}" value="${esc(subject)}">
+        <textarea class="rc-text" id="body-${i}">${esc(m.body || '')}</textarea>
+      </div>
+      <div class="rc-actions">
+        <button class="rc-btn rc-btn-primary" id="draft-${i}" onclick="openInOutlook(${i})">✉️ Open in Outlook</button>
+        <button class="rc-btn rc-btn-ghost" onclick="copyRecap(${i})">Copy</button>
+      </div>
+      <div class="rc-status" id="status-${i}"></div>
+    </div>`;
+  }).join('');
+
+  html += `<div class="footer">Generated by Claude · ${esc(data.date || '')}</div>`;
+  return html;
+}
+
+// Opens an Outlook-on-the-web compose window pre-filled with the recipients,
+// subject, and body. No Graph mail permission required — it's just a URL.
+function openInOutlook(i) {
+  const m      = RECAPS[i];
+  const subj   = document.getElementById('subj-' + i).value;
+  const body   = document.getElementById('body-' + i).value;
+  const to     = (m.attendees || []).filter(Boolean).join(',');
+  const status = document.getElementById('status-' + i);
+
+  const url = 'https://outlook.office.com/mail/deeplink/compose'
+    + '?to='      + encodeURIComponent(to)
+    + '&subject=' + encodeURIComponent(subj)
+    + '&body='    + encodeURIComponent(body);
+
+  window.open(url, '_blank');
+  status.className = 'rc-status ok';
+  status.textContent = to
+    ? 'Opened an Outlook compose window — review and send. (If nothing opened, tap Copy and paste into a new email.)'
+    : 'Opened Outlook — no attendee emails were found, so add recipients before sending.';
+}
+window.openInOutlook = openInOutlook;
+
+function copyRecap(i) {
+  const subj = document.getElementById('subj-' + i).value;
+  const body = document.getElementById('body-' + i).value;
+  navigator.clipboard.writeText(subj + '\n\n' + body).then(() => {
+    const s = document.getElementById('status-' + i);
+    s.className = 'rc-status ok'; s.textContent = 'Copied subject + body to clipboard.';
+  });
+}
+window.copyRecap = copyRecap;
+
+async function seedTestRecaps() {
+  const today  = new Date().toISOString().slice(0, 10);
+  const days    = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const d = new Date(today + 'T12:00:00');
+  const dateLabel = `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+  const monDay    = `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+
+  const sample = {
+    date: dateLabel,
+    meetings: [
+      { id: 'test-ardo', name: 'Weekly Sync // Ardo x Mely', time: '2:00–2:30 PM EDT',
+        attendees: ['xinxin.lu@ardo.com', 'negar.dianat@ardo.com', 'andres.ordonez@ardo.com'],
+        subject: `Recap: Weekly Sync // Ardo x Mely — ${monDay}`,
+        body: `Hi all,\n\nThanks for the time today. Quick recap of what we covered:\n\n• Reviewed progress on the SAP integration — still the critical path.\n• Confirmed the quick wins targeted for delivery this week.\n\nAction items:\n• Mely: confirm quick-win delivery dates this week.\n• Ardo: share SAP sandbox access.\n\nLet me know if I missed anything.\n\nBest,\nNick` },
+      { id: 'test-bb', name: 'Contract Working Session // Border Brokers x Mely', time: '3:00–3:30 PM EDT',
+        attendees: ['mike@borderbrokers.com'],
+        subject: `Recap: Contract Working Session // Border Brokers x Mely — ${monDay}`,
+        body: `Hi Mike,\n\nGreat session today. Summary:\n\n• Walked through the remaining contract terms.\n• Aligned on the payment schedule.\n\nAction items:\n• Mely: send revised draft for signature.\n• Border Brokers: confirm legal review timeline.\n\nThanks,\nNick` }
+    ]
+  };
+
+  try {
+    await graph('PUT', `/me/drive/root:/${RECAPS_FOLDER}/recaps-${today}.json:/content`, JSON.stringify(sample, null, 2));
+    await loadRecaps();
+  } catch (e) {
+    alert('Could not write to OneDrive: ' + e.message);
+  }
+}
+window.seedTestRecaps = seedTestRecaps;
+
+// ── Save done items to Done/ folder (read by morning digest skill next day) ──
+// Auto-called on every checkbox toggle — no manual button.
+async function saveDoneFile(dateKey) {
+  if (!dateKey) return;
+  const done = Object.entries(state[dateKey] || {})
+    .filter(([, v]) => v)
+    .map(([k]) => k);
+  const payload = JSON.stringify({ date: dateKey, completedItemIds: done }, null, 2);
+  const doneUri = `/me/drive/root:/${FOLDER}/Done/digest-${dateKey}-done.json:/content`;
+  try {
+    await graph('PUT', doneUri, payload);
+  } catch (e) {
+    console.error('Could not save done file:', e);
+  }
+}
+
+init();
+</script>
+</body>
+</html>
