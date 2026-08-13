@@ -270,6 +270,26 @@
     .sched-btn { display: inline-block; font-size: 12px; font-weight: 600; color: #fff;
                  background: var(--accent); border-radius: 8px; padding: 6px 12px; text-decoration: none; }
     .sched-btn:hover { opacity: .9; }
+
+    /* ── Client card (rich, redesigned) ────────────────────────── */
+    .cli-card { background: var(--card); border-radius: 12px; margin-bottom: 14px; overflow: hidden;
+                box-shadow: 0 1px 3px rgba(0,0,0,.09); border-left: 4px solid var(--border); padding: 14px; }
+    .cli-card.st-critical        { border-left-color: #dc2626; }
+    .cli-card.st-needs-attention { border-left-color: #d97706; }
+    .cli-card.st-in-progress     { border-left-color: #2563eb; }
+    .cli-card.st-on-track        { border-left-color: #16a34a; }
+    .cli-card.st-waiting         { border-left-color: #6b7280; }
+    .cli-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .cli-card .cli-name { font-size: 15px; font-weight: 700; }
+    .cli-meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .cli-field { font-size: 13px; line-height: 1.55; margin-top: 8px; }
+    .cli-lbl { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+               color: var(--muted); margin-right: 6px; }
+    .cli-field a { color: var(--accent); text-decoration: none; word-break: break-word; }
+    .cli-foot { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border);
+                font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+    .cli-foot a { color: var(--accent); text-decoration: none; }
+    .cli-domain { color: var(--muted); }
   </style>
 </head>
 <body>
@@ -632,9 +652,20 @@ function taskEventUrl(item, dateKey) {
   return outlookEventUrl({ subject: item.title || 'Task', start, end, body });
 }
 
+// Human date label from an ISO slotStart (e.g. "Thu, Aug 14"). Empty if none.
+function formatSlotDateLabel(item) {
+  if (!item.slotStart) return '';
+  const d = new Date(item.slotStart);
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+// Only shown when the skill assigned a slot (i.e. the task has a clear deadline).
 function scheduleRow(item, dateKey) {
-  const slot = item.suggestedSlot ? `<span class="slot-time">🕐 ${esc(item.suggestedSlot)}</span>` : '';
-  return `<div class="sched-row">${slot}<a class="sched-btn" href="${taskEventUrl(item, dateKey)}" target="_blank" rel="noopener">＋ Add to Outlook</a></div>`;
+  if (!item.suggestedSlot && !item.slotStart) return '';
+  const when = [formatSlotDateLabel(item), item.suggestedSlot].filter(Boolean).join(' · ');
+  const chip = when ? `<span class="slot-time">🕐 ${esc(when)}</span>` : '';
+  return `<div class="sched-row">${chip}<a class="sched-btn" href="${taskEventUrl(item, dateKey)}" target="_blank" rel="noopener">＋ Add to Outlook</a></div>`;
 }
 
 // A single checkable task row (used by MIT, Quick Wins and every quadrant).
@@ -645,7 +676,7 @@ function renderTaskRow(item, dateKey, ydState, opts = {}) {
   const src      = item.source ? `<span class="src">${esc(sourceLabel(item.source))}</span>` : '';
   const dur      = (item.durationMin != null) ? `<span class="dur">~${item.durationMin}m</span>` : '';
   const meta     = (src || dur) ? `<div class="task-meta">${src}${dur}</div>` : '';
-  const sched    = opts.schedulable ? scheduleRow(item, dateKey) : '';
+  const sched    = scheduleRow(item, dateKey);   // self-hides unless the task has a slot (deadline)
   return `<div class="ai" data-id="${esc(item.id)}">
     <div class="chk"></div>
     <div class="it">
@@ -732,7 +763,8 @@ function renderClientsTab(data) {
   if (s.clients?.length) {
     const order  = { critical: 0, 'needs-attention': 1, 'in-progress': 2, 'on-track': 3, waiting: 4 };
     const sorted = s.clients.slice().sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
-    html += renderSection('cli', '🏢 Client Status', sorted, null, {}, 'client');
+    html += `<div class="matrix-label">🏢 Client Status</div>`;
+    html += sorted.map(c => renderItem(c, null, {}, 'client')).join('');
   } else {
     html += `<div class="section"><div class="empty">No client updates.</div></div>`;
   }
@@ -821,21 +853,36 @@ function renderItem(item, dateKey, ydState, type) {
   // ── Client ───────────────────────────────────────────────────
   if (type === 'client') {
     const m = {
-      critical:          ['d-r','b-r','Critical'],
-      'needs-attention': ['d-y','b-y','Needs Attention'],
-      'in-progress':     ['d-b','b-b','In Progress'],
-      'on-track':        ['d-g','b-g','On Track'],
-      waiting:           ['d-gr','b-gr','Waiting']
+      critical:          ['b-r','Critical'],
+      'needs-attention': ['b-y','Needs Attention'],
+      'in-progress':     ['b-b','In Progress'],
+      'on-track':        ['b-g','On Track'],
+      waiting:           ['b-gr','Waiting']
     };
-    const [dc, bc, lbl] = m[item.status] || ['d-gr','b-gr','Unknown'];
-    return `<div class="cli-row">
-      <div class="dot ${dc}"></div>
-      <div style="flex:1">
-        <div class="cli-name">${item.name || ''}<span class="bdg ${bc}">${lbl}</span></div>
-        ${item.activity      ? `<div class="cli-act"><strong>Latest activity:</strong> ${item.activity}</div>`        : ''}
-        ${item.currentStatus ? `<div class="cli-next"><strong>Current status:</strong> ${item.currentStatus}</div>` : ''}
-        ${item.nextStep      ? `<div class="cli-next"><strong>Next steps:</strong> ${item.nextStep}</div>`           : ''}
-      </div>
+    const [bc, lbl] = m[item.status] || ['b-gr','Unknown'];
+    const meta = [item.industry, item.location, item.volume].filter(Boolean).map(esc).join(' · ');
+
+    const contacts = (item.contacts || []).filter(Boolean);
+    const contactsHtml = contacts.length
+      ? contacts.map(c => `<a href="mailto:${esc(c)}">${esc(c)}</a>`).join(', ')
+      : (item.domain ? `<span class="cli-domain">none logged — search @${esc(item.domain)}</span>` : '');
+
+    const lm = item.lastMeeting;
+    const foot = [];
+    if (item.domain) foot.push(`<span class="cli-domain">@${esc(item.domain)}</span>`);
+    if (lm && (lm.title || lm.url)) {
+      const label = `Last meeting: ${esc(lm.title || 'notes')}${lm.date ? ` (${esc(lm.date)})` : ''} ↗`;
+      foot.push(lm.url ? `<a href="${esc(lm.url)}" target="_blank" rel="noopener">${label}</a>` : `<span>${label}</span>`);
+    }
+
+    return `<div class="cli-card st-${esc(item.status || 'waiting')}">
+      <div class="cli-top"><span class="cli-name">${esc(item.name || '')}</span><span class="bdg ${bc}">${lbl}</span></div>
+      ${meta ? `<div class="cli-meta">${meta}</div>` : ''}
+      ${item.currentStatus ? `<div class="cli-field"><span class="cli-lbl">Status</span>${esc(item.currentStatus)}</div>` : ''}
+      ${item.nextStep      ? `<div class="cli-field"><span class="cli-lbl">Next step</span>${esc(item.nextStep)}</div>` : ''}
+      ${item.owner         ? `<div class="cli-field"><span class="cli-lbl">Owner</span>${esc(item.owner)}</div>` : ''}
+      ${contactsHtml       ? `<div class="cli-field"><span class="cli-lbl">Contacts</span>${contactsHtml}</div>` : ''}
+      ${foot.length        ? `<div class="cli-foot">${foot.join('')}</div>` : ''}
     </div>`;
   }
 
@@ -943,18 +990,27 @@ async function seedTestDigest() {
         { id: "teams-test-2", narrative: "Edward posted the V4 Executive Summary / Product Roadmap at 1:30 AM: transitioning Mely from a template-driven extraction platform (V3.5) to an intelligent validation platform (V4). Kevin Lai posted 'Updated Doc to be Reviewed' at 4:15 AM — likely the ticket system doc from his three-day build." }
       ],
       clients: [
-        { id: "cli-test-1", name: "Ardo", status: "in-progress",
-          activity: "Christophe acknowledged Gantt v3, well-received. In-person meeting today at 9 AM.",
-          currentStatus: "Discovery wrapping up; SAP integration scoping in progress.",
-          nextStep: "Confirm quick wins being delivered this week. SAP integration is the critical path." },
-        { id: "cli-test-2", name: "Willson International", status: "needs-attention",
-          activity: "Readiness review Jun 8 — John gave green light. Nick assigned to project manage Descartes coordination.",
+        { id: "cli-test-1", name: "Honda Trading Canada (HTC)", status: "needs-attention",
+          owner: "Nicolas Ferron", domain: "htc.honda.com",
+          industry: "Automotive", location: "Torrance, CA, United States", volume: "~700 shipments/mo",
+          currentStatus: "Ramp-up sentiment good, but a learned rule did not persist between two PARS ten days apart; three build items still open.",
+          nextStep: "Investigate why the rule had to be re-applied between 20DSPARS020346 and 20DSPARS020370; log the 406 cargo-control rule.",
+          contacts: ["donalds_nnanta@htc.honda.com", "krista_middleton@htc.honda.com", "dave_sookdeo@htc.honda.com"],
+          lastMeeting: { title: "Honda x Mely AI — Production Ramp Up (2/2)", date: "2026-08-11", url: "https://tldv.io/" } },
+        { id: "cli-test-2", name: "Willson International", status: "in-progress",
+          owner: "Nicolas Ferron", domain: "willsonintl.com",
+          industry: "Customs Brokerage", location: "Oakville, ON, Canada", volume: "~1,200 entries/mo",
           currentStatus: "Pre-go-live; field mappings unresolved with Descartes.",
-          nextStep: "Contact Descartes (Daniel), resolve field mappings, target June 15 go-live." },
+          nextStep: "Contact Descartes (Daniel), resolve the five field mappings, target June 15 go-live.",
+          contacts: ["john.p@willsonintl.com"],
+          lastMeeting: { title: "Readiness Review // Willson x Mely", date: "2026-06-08", url: "https://tldv.io/" } },
         { id: "cli-test-3", name: "Border Brokers", status: "on-track",
-          activity: "Mike, Sarah, and Macfarlane accepted Training and Go-Live invites. Column mapping confirmed working.",
-          currentStatus: "Training complete; go-live green light call Thursday.",
-          nextStep: "Deliver training today 3:30 PM. Go-live green light call Thursday." }
+          owner: "Nicolas Ferron", domain: "borderbrokers.com",
+          industry: "Customs Brokerage", location: "Buffalo, NY, United States", volume: "~400 entries/mo",
+          currentStatus: "Training complete; go-live green-light call Thursday.",
+          nextStep: "Deliver training today 3:30 PM; hold the go-live green-light call Thursday.",
+          contacts: ["mike@borderbrokers.com", "sarah@borderbrokers.com"],
+          lastMeeting: { title: "Training // Border Brokers x Mely", date: "2026-06-10", url: "https://tldv.io/" } }
       ]
     }
   };
