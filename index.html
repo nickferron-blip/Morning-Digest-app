@@ -219,6 +219,57 @@
     .rc-status { font-size: 12px; padding: 0 14px 12px; line-height: 1.5; }
     .rc-status.err { color: var(--crit); }
     .rc-status.ok  { color: #16a34a; }
+
+    /* ── Power Hour note ───────────────────────────────────────── */
+    .ph-note { font-size: 12px; line-height: 1.5; border-radius: 10px;
+               padding: 10px 12px; margin-bottom: 12px; }
+    .ph-note strong { font-weight: 700; }
+    .ph-am { background: var(--tod-bg); color: var(--tod); border: 1px solid #fde68a; }
+    .ph-pm { background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; }
+    @media (prefers-color-scheme: dark) {
+      .ph-am { background: #1a0e00; color: #fbbf24; border-color: #451a03; }
+      .ph-pm { background: #150d2b; color: #a78bfa; border-color: #2e1065; }
+    }
+
+    /* ── MIT (Most Important Task) ─────────────────────────────── */
+    .mit-wrap { border: 2px solid var(--accent); border-radius: 12px; overflow: hidden;
+                margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+    .mit-label { background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
+                 text-transform: uppercase; letter-spacing: .08em; padding: 7px 14px; }
+    .mit-wrap .ai { border-bottom: none; }
+    .mit-wrap .ttl { font-size: 15px; }
+
+    /* ── Quick wins header ─────────────────────────────────────── */
+    .sh-quick { background: #ecfeff; color: #0e7490; border-bottom: 1px solid #a5f3fc; }
+    @media (prefers-color-scheme: dark) { .sh-quick { background: #083344; color: #67e8f9; border-color: #155e75; } }
+
+    /* ── Eisenhower matrix ─────────────────────────────────────── */
+    .matrix-label { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                    letter-spacing: .08em; color: var(--muted); padding: 4px 2px 8px; }
+    .matrix { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+    @media (max-width: 560px) { .matrix { grid-template-columns: 1fr; } }
+    .quad { background: var(--card); border-radius: 12px; overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,.09); border-top: 3px solid var(--border); }
+    .quad-do       { border-top-color: #dc2626; }
+    .quad-schedule { border-top-color: #2563eb; }
+    .quad-delegate { border-top-color: #d97706; }
+    .quad-eliminate{ border-top-color: #6b7280; }
+    .quad-h { padding: 9px 14px 7px; border-bottom: 1px solid var(--border); }
+    .quad-t { display: block; font-size: 13px; font-weight: 700; }
+    .quad-s { display: block; font-size: 10px; text-transform: uppercase;
+              letter-spacing: .05em; color: var(--muted); margin-top: 1px; }
+    .quad-empty { padding: 12px 14px; color: var(--muted); font-size: 12px; font-style: italic; }
+
+    /* ── Task meta + schedule ──────────────────────────────────── */
+    .task-meta { margin-top: 5px; display: flex; gap: 6px; flex-wrap: wrap; }
+    .src, .dur { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 20px; }
+    .dur { background: var(--bg); color: var(--muted); }
+    .src { background: #eef2ff; color: #4338ca; }
+    @media (prefers-color-scheme: dark) { .src { background: #1e1b4b; color: #a5b4fc; } .dur { background: #0b1220; } }
+    .sched-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+    .sched-btn { display: inline-block; font-size: 12px; font-weight: 600; color: #fff;
+                 background: var(--accent); border-radius: 8px; padding: 6px 12px; text-decoration: none; }
+    .sched-btn:hover { opacity: .9; }
   </style>
 </head>
 <body>
@@ -252,7 +303,9 @@
       </div>
     </div>
     <div class="tabs">
-      <button class="tab active" id="tab-digest" onclick="switchView('digest')">☀️ Digest</button>
+      <button class="tab active" id="tab-todo" onclick="switchView('todo')">✅ To-Do</button>
+      <button class="tab" id="tab-meetings" onclick="switchView('meetings')">📅 Mtgs</button>
+      <button class="tab" id="tab-clients" onclick="switchView('clients')">🏢 Clients</button>
       <button class="tab" id="tab-recaps" onclick="switchView('recaps')">📝 Recaps</button>
     </div>
     <div class="progress-row hidden" id="progress-row">
@@ -264,6 +317,8 @@
   <div id="loading"><div class="spinner"></div><span style="color:var(--muted);font-size:14px">Loading your digest…</span></div>
   <div id="error" class="hidden"></div>
   <main id="content" class="hidden"></main>
+  <main id="meetings" class="hidden"></main>
+  <main id="clients" class="hidden"></main>
   <main id="recaps" class="hidden"></main>
 </div>
 
@@ -275,6 +330,7 @@ const CLIENT_ID   = '6d312e2b-8697-4162-92c3-fb76ad4782da';
 const TENANT_ID   = 'add1a0bc-b68d-4df0-aefd-d9999f26df0c';
 const FOLDER      = 'Claude Main Folder/Apps/morning-digest-app/Daily json files';
 const RECAPS_FOLDER = FOLDER + '/Meeting Recap emails';  // Recaps tab reads/writes here
+const POWER_HOUR    = '8:00–11:00 AM';   // your standing morning deep-work block (display only)
 // ──────────────────────────────────────────────────────────────────────────
 
 const SCOPES = ['User.Read', 'Files.ReadWrite'];
@@ -285,7 +341,10 @@ const msalCfg = {
 let msalApp = null;
 let account = null;
 let currentDateKey = null;
-let view = 'digest';
+let view = 'todo';
+let digestData = null;      // last-loaded digest JSON (shared across To-Do/Meetings/Clients tabs)
+let digestDateKey = null;
+let digestYdState = {};      // yesterday's completion state, for carry-over detection
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 async function init() {
@@ -310,16 +369,34 @@ window.signIn = signIn;
 window.loadDigest = () => loadDigest();
 
 // ── View switching ──────────────────────────────────────────────────────────
+const DIGEST_TABS = { todo: 'content', meetings: 'meetings', clients: 'clients' };
+const TAB_TITLES  = { todo: 'To-Do', meetings: 'Meetings', clients: 'Client Status', recaps: 'Meeting Recaps' };
+
 function refresh() { view === 'recaps' ? loadRecaps() : loadDigest(); }
+
+function showDigestContainer(v) {
+  Object.values(DIGEST_TABS).forEach(id =>
+    document.getElementById(id).classList.toggle('hidden', id !== DIGEST_TABS[v]));
+  document.getElementById('recaps').classList.add('hidden');
+}
+
 function switchView(v) {
   view = v;
-  document.getElementById('tab-digest').classList.toggle('active', v === 'digest');
-  document.getElementById('tab-recaps').classList.toggle('active', v === 'recaps');
-  document.getElementById('hdr-title').textContent = v === 'recaps' ? 'Meeting Recaps' : 'Morning Digest';
-  document.getElementById('progress-row').classList.add('hidden');
+  ['todo', 'meetings', 'clients', 'recaps'].forEach(t =>
+    document.getElementById('tab-' + t).classList.toggle('active', t === v));
+  document.getElementById('hdr-title').textContent = TAB_TITLES[v] || 'Morning Digest';
   document.getElementById('error').classList.add('hidden');
-  if (v === 'digest') { document.getElementById('recaps').classList.add('hidden'); loadDigest(); }
-  else { document.getElementById('content').classList.add('hidden'); loadRecaps(); }
+  document.getElementById('progress-row').classList.toggle('hidden', v !== 'todo');
+
+  if (v === 'recaps') {
+    Object.values(DIGEST_TABS).forEach(id => document.getElementById(id).classList.add('hidden'));
+    loadRecaps();
+    return;
+  }
+  // To-Do / Meetings / Clients all share one digest fetch
+  if (!digestData) { loadDigest(); return; }
+  showDigestContainer(v);
+  if (v === 'todo') refreshProgress(digestDateKey);
 }
 window.refresh = refresh;
 window.switchView = switchView;
@@ -385,8 +462,8 @@ function refreshProgress(dateKey) {
   const total = items.length;
   const pct = Math.round((done / total) * 100);
   document.getElementById('progress-fill').style.width = pct + '%';
-  document.getElementById('progress-label').textContent = `${done} of ${total} items done`;
-  document.getElementById('progress-row').classList.remove('hidden');
+  document.getElementById('progress-label').textContent = `${done} of ${total} tasks done`;
+  document.getElementById('progress-row').classList.toggle('hidden', view !== 'todo');
 }
 
 // ── Load digest ────────────────────────────────────────────────────────────
@@ -395,7 +472,7 @@ async function loadDigest() {
   const content = document.getElementById('content');
   const errEl   = document.getElementById('error');
   loading.classList.remove('hidden');
-  content.classList.add('hidden');
+  ['content', 'meetings', 'clients', 'recaps'].forEach(id => document.getElementById(id).classList.add('hidden'));
   errEl.classList.add('hidden');
   document.getElementById('progress-row').classList.add('hidden');
 
@@ -427,22 +504,28 @@ async function loadDigest() {
 
     await loadState();
 
-    document.getElementById('hdr-date').textContent = data.date || dateKey;
-    content.innerHTML = renderDigest(data, dateKey, state[ydKey] || {});
+    digestData    = data;
+    digestDateKey = dateKey;
+    digestYdState = state[ydKey] || {};
 
-    // Wire up checkable items — stop propagation on accordion details
+    document.getElementById('hdr-date').textContent = data.date || dateKey;
+    content.innerHTML                        = renderTodoTab(data, dateKey, digestYdState);
+    document.getElementById('meetings').innerHTML = renderMeetingsTab(data);
+    document.getElementById('clients').innerHTML  = renderClientsTab(data);
+
+    // Wire up checkable task rows (To-Do tab only). Buttons/links inside a row must not toggle it.
     content.querySelectorAll('.ai[data-id]').forEach(el => {
       if (isDone(dateKey, el.dataset.id)) el.classList.add('done');
       el.addEventListener('click', () => toggle(dateKey, el.dataset.id, el));
     });
-    content.querySelectorAll('.ai details').forEach(d => {
-      d.addEventListener('click', e => e.stopPropagation());
+    content.querySelectorAll('.ai details, .ai a, .ai button').forEach(el => {
+      el.addEventListener('click', e => e.stopPropagation());
     });
 
     currentDateKey = dateKey;
-    refreshProgress(dateKey);
     loading.classList.add('hidden');
-    content.classList.remove('hidden');
+    showDigestContainer(view in DIGEST_TABS ? view : 'todo');
+    if (view === 'todo' || !(view in DIGEST_TABS)) refreshProgress(dateKey);
 
   } catch (e) {
     console.error(e);
@@ -456,38 +539,204 @@ function showError(msg) {
   el.innerHTML = msg; el.classList.remove('hidden');
 }
 
-// ── Render ─────────────────────────────────────────────────────────────────
-function renderDigest(data, dateKey, ydState) {
-  const s = data.sections || {};
+// ── Task classification helpers (MIT · Eisenhower · 5-minute rule) ───────────
 
-  const d = new Date(dateKey + 'T12:00:00');
-  const isFriday = d.getDay() === 5;
-  const tmrwLabel = isFriday ? '🟡 Before Monday EOD' : '🟡 Due Tomorrow';
+// Normalize any digest shape into a flat task list. Emails/Teams items become
+// tasks too (the skill now sources tasks from tl;dv, Teams and meetings).
+function collectTasks(s) {
+  if (s.todos?.length) return s.todos.slice();
+  const out = [];
+  const push = (arr, priority, source) => (arr || []).forEach(it =>
+    out.push({ ...it, priority: it.priority || priority, source: it.source || source }));
+  push(s.overdue,  'critical', 'email');
+  push(s.critical, 'critical', 'meeting');
+  push(s.today,    'high',     'meeting');
+  push(s.tomorrow, 'normal',   'meeting');
+  push(s.emails,   'high',     'email');
+  return out;
+}
 
-  let html = '';
-
-  // New flat todos[] format with priority field
-  if (s.todos?.length) {
-    const crit = s.todos.filter(t => t.priority === 'critical');
-    const high = s.todos.filter(t => t.priority === 'high');
-    const norm = s.todos.filter(t => t.priority === 'normal');
-    if (crit.length) html += renderSection('crit', '🚨 Critical — Act Now', crit, dateKey, ydState, 'action');
-    if (high.length) html += renderSection('tod',  '🔴 Due Today',          high, dateKey, ydState, 'action');
-    if (norm.length) html += renderSection('tmrw', tmrwLabel,               norm, dateKey, ydState, 'action');
+// Eisenhower quadrant from explicit importance/urgency, else inferred from priority.
+function classify(t) {
+  let important, urgent;
+  if (t.importance != null || t.urgency != null) {
+    important = t.importance === 'important' || t.importance === true || t.importance === 'high';
+    urgent    = t.urgency    === 'urgent'    || t.urgency    === true || t.urgency    === 'high';
   } else {
-    // Legacy format: separate arrays per priority band
-    if (s.overdue?.length)  html += renderSection('ovr',  '⚠️ Overdue / Past Due', s.overdue,  dateKey, ydState, 'action');
-    if (s.critical?.length) html += renderSection('crit', '🚨 Critical — Act Now', s.critical, dateKey, ydState, 'action');
-    if (s.today?.length)    html += renderSection('tod',  '🔴 Due Today',          s.today,    dateKey, ydState, 'action');
-    if (s.tomorrow?.length) html += renderSection('tmrw', tmrwLabel,              s.tomorrow, dateKey, ydState, 'action');
+    important = t.priority === 'critical' || t.priority === 'high' || t.priority === 'normal';
+    urgent    = t.priority === 'critical' || t.priority === 'high';
+  }
+  const quadrant = important && urgent ? 'do'
+    : important && !urgent ? 'schedule'
+    : !important && urgent ? 'delegate' : 'eliminate';
+  return { quadrant, important, urgent };
+}
+
+// 5-minute rule: anything ~5 min or under is a "do it now" quick win.
+function isQuick(t) {
+  const d = t.durationMin ?? t.minutes;
+  if (typeof d === 'number') return d <= 5;
+  return t.quick === true;
+}
+
+// Pick the single Most Important Task: explicit flag, else best critical/do-quadrant task.
+function pickMIT(tasks) {
+  return tasks.find(t => t.mit || t.isMIT)
+      || tasks.find(t => t.priority === 'critical')
+      || tasks.find(t => classify(t).quadrant === 'do')
+      || tasks[0] || null;
+}
+
+function sourceLabel(src) {
+  return ({ tldv: 'tl;dv', teams: 'Teams', meeting: 'Meeting', email: 'Email', calendar: 'Calendar' })[src] || src;
+}
+
+// Parse a human slot like "8:00–8:20 AM EDT" into naive local ISO start/end.
+function parseSlot(slot, dateKey) {
+  if (!slot || !dateKey) return null;
+  const clean = String(slot).replace(/[–—]/g, '-');
+  const apms  = [...clean.matchAll(/(AM|PM)/gi)].map(x => x[1].toUpperCase());
+  let times   = [...clean.matchAll(/(\d{1,2}):(\d{2})/g)].map(x => ({ h: +x[1], m: +x[2] }));
+  if (!times.length) times = [...clean.matchAll(/\b(\d{1,2})\b/g)].map(x => ({ h: +x[1], m: 0 })).slice(0, 2);
+  if (!times.length) return null;
+  const to24 = (h, apm) => {
+    if (!apm) return h;
+    if (apm === 'PM' && h !== 12) return h + 12;
+    if (apm === 'AM' && h === 12) return 0;
+    return h;
+  };
+  const startApm = apms.length === 2 ? apms[0] : (apms[0] || null);
+  const endApm   = apms.length === 2 ? apms[1] : (apms[0] || null);
+  const iso = (t, apm) => `${dateKey}T${String(to24(t.h, apm)).padStart(2, '0')}:${String(t.m).padStart(2, '0')}:00`;
+  return { start: iso(times[0], startApm), end: times[1] ? iso(times[1], endApm) : null };
+}
+
+// Outlook web calendar compose deep-link — no calendar permission needed, user confirms & saves.
+function outlookEventUrl({ subject, start, end, body }) {
+  const p = new URLSearchParams();
+  p.set('subject', subject || 'Task');
+  if (start) p.set('startdt', start);
+  if (end)   p.set('enddt', end);
+  if (body)  p.set('body', body);
+  return 'https://outlook.office.com/calendar/0/deeplink/compose?' + p.toString();
+}
+
+function taskEventUrl(item, dateKey) {
+  let start = item.slotStart, end = item.slotEnd;
+  if (!start && item.suggestedSlot) {
+    const p = parseSlot(item.suggestedSlot, dateKey);
+    if (p) { start = p.start; end = p.end; }
+  }
+  const src  = item.source ? `\n\nSource: ${sourceLabel(item.source)}` : '';
+  const body = (item.body || item.detail || '') + src;
+  return outlookEventUrl({ subject: item.title || 'Task', start, end, body });
+}
+
+function scheduleRow(item, dateKey) {
+  const slot = item.suggestedSlot ? `<span class="slot-time">🕐 ${esc(item.suggestedSlot)}</span>` : '';
+  return `<div class="sched-row">${slot}<a class="sched-btn" href="${taskEventUrl(item, dateKey)}" target="_blank" rel="noopener">＋ Add to Outlook</a></div>`;
+}
+
+// A single checkable task row (used by MIT, Quick Wins and every quadrant).
+function renderTaskRow(item, dateKey, ydState, opts = {}) {
+  const carried  = item.carried || (ydState.hasOwnProperty(item.id) && !ydState[item.id]);
+  const bodyText = item.body || item.detail || '';
+  const vbadge   = item.verification ? `<span class="vbadge vbadge-${item.verification}">${vbadgeLabel(item.verification)}</span>` : '';
+  const src      = item.source ? `<span class="src">${esc(sourceLabel(item.source))}</span>` : '';
+  const dur      = (item.durationMin != null) ? `<span class="dur">~${item.durationMin}m</span>` : '';
+  const meta     = (src || dur) ? `<div class="task-meta">${src}${dur}</div>` : '';
+  const sched    = opts.schedulable ? scheduleRow(item, dateKey) : '';
+  return `<div class="ai" data-id="${esc(item.id)}">
+    <div class="chk"></div>
+    <div class="it">
+      <div class="ttl">${esc(item.title || '')}${carried ? '<span class="carry">Carried over</span>' : ''}${vbadge}</div>
+      ${bodyText ? `<div class="dtl">${bodyText}</div>` : ''}
+      ${meta}${sched}
+    </div>
+  </div>`;
+}
+
+function renderQuad(key, title, subtitle, items, dateKey, ydState, schedulable) {
+  const body = items.length
+    ? items.map(t => renderTaskRow(t, dateKey, ydState, { schedulable })).join('')
+    : `<div class="quad-empty">Nothing here.</div>`;
+  return `<div class="quad quad-${key}">
+    <div class="quad-h"><span class="quad-t">${title}</span><span class="quad-s">${subtitle}</span></div>
+    <div class="quad-body">${body}</div>
+  </div>`;
+}
+
+// ── To-Do tab ────────────────────────────────────────────────────────────────
+function renderTodoTab(data, dateKey, ydState) {
+  const s     = data.sections || {};
+  const tasks = collectTasks(s);
+
+  let html = `<div class="ph-note ph-am">☀️ <strong>Power Hour · ${esc(POWER_HOUR)}</strong> — you focus best in the morning, so knock out your MIT and deep work now. Keep meetings for the afternoon.</div>`;
+
+  if (!tasks.length) {
+    html += `<div class="section"><div class="empty">No tasks today. 🎉</div></div>`;
+    html += `<div class="footer">Generated by Claude · ${esc(data.date || dateKey)}</div>`;
+    return html;
   }
 
-  if (s.emails?.length)   html += renderSection('eml',   '✉️ Emails to Reply', s.emails,  dateKey, ydState, 'email');
-  if (s.meetings?.length) html += renderMeetingsSection(s.meetings);
-  if (s.teams?.length)    html += renderSection('teams', '💬 Teams Updates',   s.teams,   dateKey, ydState, 'teams');
-  if (s.clients?.length)  html += renderSection('cli',   '🏢 Client Status',   s.clients, dateKey, ydState, 'client');
+  const mit       = pickMIT(tasks);
+  const rest      = tasks.filter(t => t !== mit);
+  const quick     = rest.filter(isQuick);
+  const scheduled = rest.filter(t => !isQuick(t));
 
-  html += `<div class="footer">Generated by Claude · ${data.date || dateKey}</div>`;
+  const quads = { do: [], schedule: [], delegate: [], eliminate: [] };
+  scheduled.forEach(t => quads[classify(t).quadrant].push(t));
+
+  // MIT — the one thing
+  if (mit) {
+    html += `<div class="mit-wrap">
+      <div class="mit-label">🎯 Most Important Task</div>
+      ${renderTaskRow(mit, dateKey, ydState, { schedulable: true })}
+    </div>`;
+  }
+
+  // Quick wins — 5-minute rule
+  if (quick.length) {
+    html += `<div class="section"><div class="sh sh-quick">⚡ Quick Wins · under 5 min — do these now</div>`
+          + quick.map(t => renderTaskRow(t, dateKey, ydState, {})).join('')
+          + `</div>`;
+  }
+
+  // Eisenhower matrix
+  html += `<div class="matrix-label">🧭 Eisenhower Matrix</div><div class="matrix">`
+        + renderQuad('do',        '🔴 Do First',  'Urgent + Important',        quads.do,        dateKey, ydState, true)
+        + renderQuad('schedule',  '🔵 Schedule',  'Important · Not Urgent',    quads.schedule,  dateKey, ydState, true)
+        + renderQuad('delegate',  '🟡 Delegate',  'Urgent · Not Important',    quads.delegate,  dateKey, ydState, false)
+        + renderQuad('eliminate', '⚪ Eliminate', 'Not Urgent · Not Important', quads.eliminate, dateKey, ydState, false)
+        + `</div>`;
+
+  html += `<div class="footer">Generated by Claude · ${esc(data.date || dateKey)}</div>`;
+  return html;
+}
+
+// ── Meetings tab ─────────────────────────────────────────────────────────────
+function renderMeetingsTab(data) {
+  const s = data.sections || {};
+  let html = `<div class="ph-note ph-pm">🌙 Meetings live in the <strong>afternoon</strong> — protect your morning for focused work.</div>`;
+  html += s.meetings?.length
+    ? renderMeetingsSection(s.meetings)
+    : `<div class="section"><div class="empty">No meetings scheduled.</div></div>`;
+  html += `<div class="footer">Generated by Claude · ${esc(data.date || '')}</div>`;
+  return html;
+}
+
+// ── Clients tab ──────────────────────────────────────────────────────────────
+function renderClientsTab(data) {
+  const s = data.sections || {};
+  let html = '';
+  if (s.clients?.length) {
+    const order  = { critical: 0, 'needs-attention': 1, 'in-progress': 2, 'on-track': 3, waiting: 4 };
+    const sorted = s.clients.slice().sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+    html += renderSection('cli', '🏢 Client Status', sorted, null, {}, 'client');
+  } else {
+    html += `<div class="section"><div class="empty">No client updates.</div></div>`;
+  }
+  html += `<div class="footer">Generated by Claude · ${esc(data.date || '')}</div>`;
   return html;
 }
 
@@ -645,22 +894,39 @@ async function seedTestDigest() {
   const sample = {
     date: dateLabel,
     sections: {
-      overdue: [
-        { id: "ovr-test-1", title: "Reply to Mantoria — FedEx LVS samples", verification: "verified",
-          detail: "Adriana Mendez · 6 days without acknowledgment",
-          body: "Adriana sent FedEx Express and Ground LVS sample PDFs on June 3. Both emails remain unread, no reply found in sent items after full search." }
-      ],
-      today: [
-        { id: "tod-test-1", title: "Project manage Willson → Descartes integration", verification: "partial",
-          detail: "Edward assigned this Jun 8 · Target go-live June 15",
-          body: "Contact Descartes (Daniel) and track mapping items: CI Date, PO Date, Sales UOM, Stat UOM, Carrier Phone Number. Readiness test proposed for Friday June 13 at 11 AM." },
-        { id: "tod-test-2", title: "Post release notes and update Pulse", verification: "verified",
-          detail: "Edward asked where weekend release notes are" }
-      ],
-      emails: [
-        { id: "eml-test-1", title: "Adriana Mendez (Mantoria) — FedEx LVS samples", verification: "partial",
-          detail: "June 3 · Sent Air + Ground LVS PDFs, asked to note CCN structure difference",
-          draft: "Hi Adriana,\n\nThank you for sending over both the FedEx Express and FedEx Ground LVS samples — received and noted on the CCN structure difference between the two modes.\n\nI will review the files and follow up with you shortly.\n\nAll the best,\nNicolas" }
+      todos: [
+        { id: "crit-willson-descartes-mapping", priority: "critical", mit: true,
+          importance: "important", urgency: "urgent", durationMin: 45, source: "meeting",
+          suggestedSlot: "8:00–8:45 AM EDT", verification: "partial",
+          title: "Resolve Descartes field mappings for Willson go-live",
+          detail: "Go-live target June 15 · 5 fields unresolved",
+          body: "Contact Daniel at Descartes and lock CI Date, PO Date, Sales UOM, Stat UOM, and Carrier Phone before the readiness test." },
+        { id: "tod-htc-testing-recap-prep", priority: "high",
+          importance: "important", urgency: "urgent", durationMin: 20, source: "tldv",
+          suggestedSlot: "8:45–9:05 AM EDT",
+          title: "Prep talking points for HTC testing recap",
+          detail: "Recap meeting at 1:30 PM today",
+          body: "Pull accuracy issues and edge cases from the first week of extraction results to steer the recap." },
+        { id: "tod-reply-adriana-lvs", priority: "high",
+          importance: "important", urgency: "urgent", durationMin: 4, source: "email",
+          verification: "verified", title: "Reply to Adriana — FedEx LVS samples",
+          detail: "6 days without acknowledgment" },
+        { id: "tmrw-post-release-notes", priority: "normal",
+          importance: "important", urgency: "not-urgent", durationMin: 15, source: "teams",
+          suggestedSlot: "9:05–9:20 AM EDT",
+          title: "Post weekend release notes and update Pulse",
+          detail: "Edward asked where they are" },
+        { id: "tmrw-kwe-user-accounts", priority: "normal",
+          importance: "important", urgency: "not-urgent", durationMin: 10, source: "meeting",
+          suggestedSlot: "9:20–9:30 AM EDT",
+          title: "Set up KWE user accounts before kickoff",
+          detail: "Onboarding kickoff tomorrow 1:00 PM" },
+        { id: "tod-approve-expense-report", priority: "high",
+          importance: "not-important", urgency: "urgent", durationMin: 3, source: "email",
+          title: "Approve team expense report", detail: "Finance nudge — quick sign-off" },
+        { id: "tmrw-archive-teams-channels", priority: "normal",
+          importance: "not-important", urgency: "not-urgent", durationMin: 10, source: "teams",
+          title: "Archive stale Teams channels", detail: "Housekeeping, no deadline" }
       ],
       meetings: [
         { id: "cal-test-1", day: "TODAY", time: "1:30–2:30 PM EDT", title: "1 Week testing recap // HTC x Mely",
