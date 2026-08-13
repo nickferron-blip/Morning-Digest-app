@@ -290,6 +290,8 @@
                 font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
     .cli-foot a { color: var(--accent); text-decoration: none; }
     .cli-domain { color: var(--muted); }
+    .cli-owner { font-size: 12px; font-family: inherit; padding: 3px 24px 3px 8px; border: 1px solid var(--border);
+                 border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; }
 
     /* ── Task row controls (drag handle + menu) ────────────────── */
     .ai { position: relative; }
@@ -504,6 +506,11 @@ const TASKS_URI = `/me/drive/root:/${FOLDER}/digest-tasks.json:/content`;
 let tasksState = {};
 let justDragged = false;   // suppresses the click-to-complete that can follow a drag
 
+// Client-ownership registry (also read by the morning-action-digest skill).
+// The Owner selector on each client card edits this file directly.
+const CLIENTS_URI = `/me/drive/root:/${FOLDER}/clients.json:/content`;
+let clientRegistry = { clients: [] };
+
 async function loadState() {
   try { const raw = await graph('GET', STATE_URI); state = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {}; }
   catch { state = {}; }
@@ -573,6 +580,7 @@ async function loadDigest() {
 
     await loadState();
     await loadTasksState();
+    await loadClientRegistry();
 
     digestData    = data;
     digestDateKey = dateKey;
@@ -583,6 +591,7 @@ async function loadDigest() {
     document.getElementById('meetings').innerHTML = renderMeetingsTab(data);
     document.getElementById('clients').innerHTML  = renderClientsTab(data);
     wireTodo(dateKey);
+    wireClients();
 
     currentDateKey = dateKey;
     loading.classList.add('hidden');
@@ -809,6 +818,50 @@ function renderClientsTab(data) {
   return html;
 }
 
+// ── Client ownership (registry read/write + Owner selector) ──────────────────
+const OWNERS = ['Nicolas Ferron', 'Edward Ko'];
+
+async function loadClientRegistry() {
+  try {
+    const raw = await graph('GET', CLIENTS_URI);
+    const j = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : null;
+    clientRegistry = (j && Array.isArray(j.clients)) ? j : { clients: [] };
+  } catch { clientRegistry = { clients: [] }; }
+}
+async function saveClientRegistry() {
+  try { await graph('PUT', CLIENTS_URI, JSON.stringify(clientRegistry, null, 2)); }
+  catch (e) { console.error('Could not save client registry:', e); }
+}
+function clientMatches(entry, name) {
+  const n = (name || '').trim().toLowerCase();
+  return [entry.name, entry.shortName, ...(entry.aliases || [])]
+    .filter(Boolean).some(x => x.trim().toLowerCase() === n);
+}
+function registryOwner(name) {
+  const e = (clientRegistry.clients || []).find(c => clientMatches(c, name));
+  return e ? e.owner : null;
+}
+function renderOwnerSelect(name, owner) {
+  const opts = [...new Set([owner, ...OWNERS].filter(Boolean))];
+  return `<select class="cli-owner" data-cli="${esc(name)}">`
+    + opts.map(o => `<option ${o === owner ? 'selected' : ''}>${esc(o)}</option>`).join('')
+    + `</select>`;
+}
+async function setClientOwner(name, owner) {
+  let e = (clientRegistry.clients || []).find(c => clientMatches(c, name));
+  if (!e) { e = { name, owner, aliases: [] }; (clientRegistry.clients = clientRegistry.clients || []).push(e); }
+  else e.owner = owner;
+  const dc = ((digestData.sections || {}).clients || []).find(c => c.name === name);
+  if (dc) dc.owner = owner;
+  document.getElementById('clients').innerHTML = renderClientsTab(digestData);
+  wireClients();
+  await saveClientRegistry();
+}
+function wireClients() {
+  document.querySelectorAll('#clients .cli-owner').forEach(sel =>
+    sel.addEventListener('change', () => setClientOwner(sel.dataset.cli, sel.value)));
+}
+
 function formatDay(day) {
   if (day === 'TODAY')    return 'Today';
   if (day === 'TOMORROW') return 'Tomorrow';
@@ -912,14 +965,18 @@ function renderItem(item, dateKey, ydState, type) {
       foot.push(lm.url ? `<a href="${esc(lm.url)}" target="_blank" rel="noopener">${label}</a>` : `<span>${label}</span>`);
     }
 
+    const stateTxt = item.state || item.currentStatus || '';   // short current state
+    const owner    = registryOwner(item.name) || item.owner || '';
+
     return `<div class="cli-card st-${esc(item.status || 'waiting')}">
       <div class="cli-top"><span class="cli-name">${esc(item.name || '')}</span><span class="bdg ${bc}">${lbl}</span></div>
       ${meta ? `<div class="cli-meta">${meta}</div>` : ''}
-      ${item.currentStatus ? `<div class="cli-field"><span class="cli-lbl">Status</span>${esc(item.currentStatus)}</div>` : ''}
-      ${item.nextStep      ? `<div class="cli-field"><span class="cli-lbl">Next step</span>${esc(item.nextStep)}</div>` : ''}
-      ${item.owner         ? `<div class="cli-field"><span class="cli-lbl">Owner</span>${esc(item.owner)}</div>` : ''}
-      ${contactsHtml       ? `<div class="cli-field"><span class="cli-lbl">Contacts</span>${contactsHtml}</div>` : ''}
-      ${foot.length        ? `<div class="cli-foot">${foot.join('')}</div>` : ''}
+      ${stateTxt      ? `<div class="cli-field"><span class="cli-lbl">Status</span>${esc(stateTxt)}</div>` : ''}
+      ${item.activity ? `<div class="cli-field"><span class="cli-lbl">Latest activity</span>${esc(item.activity)}</div>` : ''}
+      ${item.nextStep ? `<div class="cli-field"><span class="cli-lbl">Next step</span>${esc(item.nextStep)}</div>` : ''}
+      <div class="cli-field"><span class="cli-lbl">Owner</span>${renderOwnerSelect(item.name, owner)}</div>
+      ${contactsHtml  ? `<div class="cli-field"><span class="cli-lbl">Contacts</span>${contactsHtml}</div>` : ''}
+      ${foot.length   ? `<div class="cli-foot">${foot.join('')}</div>` : ''}
     </div>`;
   }
 
@@ -1308,21 +1365,24 @@ async function seedTestDigest() {
         { id: "cli-test-1", name: "Honda Trading Canada (HTC)", status: "needs-attention",
           owner: "Nicolas Ferron", domain: "htc.honda.com",
           industry: "Automotive", location: "Torrance, CA, United States", volume: "~700 shipments/mo",
-          currentStatus: "Ramp-up sentiment good, but a learned rule did not persist between two PARS ten days apart; three build items still open.",
+          state: "Ramping up",
+          activity: "Concrete evidence a learned rule didn't persist between two PARS ten days apart; Nick's three build items from the ramp-up session are still open.",
           nextStep: "Investigate why the rule had to be re-applied between 20DSPARS020346 and 20DSPARS020370; log the 406 cargo-control rule.",
           contacts: ["donalds_nnanta@htc.honda.com", "krista_middleton@htc.honda.com", "dave_sookdeo@htc.honda.com"],
           lastMeeting: { title: "Honda x Mely AI — Production Ramp Up (2/2)", date: "2026-08-11", url: "https://tldv.io/" } },
         { id: "cli-test-2", name: "Willson International", status: "in-progress",
           owner: "Nicolas Ferron", domain: "willsonintl.com",
           industry: "Customs Brokerage", location: "Oakville, ON, Canada", volume: "~1,200 entries/mo",
-          currentStatus: "Pre-go-live; field mappings unresolved with Descartes.",
+          state: "In production",
+          activity: "Six days into production with FPY at 92%+; John keeps pushing new-client volume. Three Mely-side items still owed on field mappings.",
           nextStep: "Contact Descartes (Daniel), resolve the five field mappings, target June 15 go-live.",
           contacts: ["john.p@willsonintl.com"],
           lastMeeting: { title: "Readiness Review // Willson x Mely", date: "2026-06-08", url: "https://tldv.io/" } },
         { id: "cli-test-3", name: "Border Brokers", status: "on-track",
           owner: "Nicolas Ferron", domain: "borderbrokers.com",
           industry: "Customs Brokerage", location: "Buffalo, NY, United States", volume: "~400 entries/mo",
-          currentStatus: "Training complete; go-live green-light call Thursday.",
+          state: "Testing",
+          activity: "Mike, Sarah, and Macfarlane accepted Training and Go-Live invites; column mapping confirmed working.",
           nextStep: "Deliver training today 3:30 PM; hold the go-live green-light call Thursday.",
           contacts: ["mike@borderbrokers.com", "sarah@borderbrokers.com"],
           lastMeeting: { title: "Training // Border Brokers x Mely", date: "2026-06-10", url: "https://tldv.io/" } }
