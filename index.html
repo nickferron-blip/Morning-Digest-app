@@ -290,6 +290,49 @@
                 font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
     .cli-foot a { color: var(--accent); text-decoration: none; }
     .cli-domain { color: var(--muted); }
+
+    /* ── Task row controls (drag handle + menu) ────────────────── */
+    .ai { position: relative; }
+    .drag-h { flex-shrink: 0; width: 18px; align-self: center; text-align: center; color: var(--muted);
+              font-size: 15px; line-height: 1; cursor: grab; opacity: .45; touch-action: none;
+              user-select: none; -webkit-user-select: none; }
+    .drag-h:active { cursor: grabbing; }
+    .task-menu-btn { flex-shrink: 0; align-self: flex-start; background: none; border: none; color: var(--muted);
+                     font-size: 18px; line-height: 1; padding: 0 4px; cursor: pointer; border-radius: 6px; }
+    .task-menu-btn:hover { background: var(--bg); }
+    .ai.dragging-src { opacity: .3; }
+    .quad.drop-target, .section.drop-target { outline: 2px dashed var(--accent); outline-offset: -2px; }
+    .drag-ghost { position: fixed; z-index: 1200; pointer-events: none; opacity: .95;
+                  box-shadow: 0 8px 24px rgba(0,0,0,.28); border-radius: 10px; }
+
+    /* ── Task action menu (popover) ────────────────────────────── */
+    .tmenu-backdrop { position: fixed; inset: 0; z-index: 1300; }
+    .tmenu { position: fixed; z-index: 1400; background: var(--card); border: 1px solid var(--border);
+             border-radius: 10px; box-shadow: 0 10px 34px rgba(0,0,0,.28); padding: 6px; min-width: 190px; }
+    .tmenu button { display: block; width: 100%; text-align: left; background: none; border: none;
+                    color: var(--text); padding: 9px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    .tmenu button:hover { background: var(--bg); }
+    .tmenu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
+    .tmenu-label { font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+                   color: var(--muted); padding: 6px 10px 3px; }
+
+    /* ── Add task ──────────────────────────────────────────────── */
+    .addtask-bar { margin-bottom: 12px; }
+    .addtask-btn { width: 100%; background: var(--card); border: 1px dashed var(--border); color: var(--accent);
+                   border-radius: 10px; padding: 11px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .addtask-btn:hover { border-color: var(--accent); }
+    .addtask-form { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+    .addtask-form input, .addtask-form select, .addtask-form textarea {
+       width: 100%; font-size: 13px; font-family: inherit; padding: 9px 10px; margin-bottom: 8px;
+       border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); }
+    .addtask-form textarea { resize: vertical; }
+    .addtask-form .row2 { display: flex; gap: 8px; }
+    .addtask-form .row2 > * { flex: 1; }
+    .addtask-actions { display: flex; gap: 8px; margin-top: 2px; }
+    .addtask-actions button { flex: 1; border: none; border-radius: 8px; padding: 10px; font-size: 13px;
+                              font-weight: 600; cursor: pointer; }
+    .at-save { background: var(--accent); color: #fff; }
+    .at-cancel { background: var(--bg); color: var(--text); border: 1px solid var(--border) !important; }
   </style>
 </head>
 <body>
@@ -455,6 +498,12 @@ async function graph(method, path, body) {
 const STATE_URI = `/me/drive/root:/${FOLDER}/digest-state.json:/content`;
 let state = {};
 
+// Manual task edits (quadrant/MIT/order overrides + user-added tasks), kept separate
+// from the done-state so the existing checkbox pipeline is untouched.
+const TASKS_URI = `/me/drive/root:/${FOLDER}/digest-tasks.json:/content`;
+let tasksState = {};
+let justDragged = false;   // suppresses the click-to-complete that can follow a drag
+
 async function loadState() {
   try { const raw = await graph('GET', STATE_URI); state = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {}; }
   catch { state = {}; }
@@ -523,6 +572,7 @@ async function loadDigest() {
     const ydKey = yd.toISOString().slice(0, 10);
 
     await loadState();
+    await loadTasksState();
 
     digestData    = data;
     digestDateKey = dateKey;
@@ -532,15 +582,7 @@ async function loadDigest() {
     content.innerHTML                        = renderTodoTab(data, dateKey, digestYdState);
     document.getElementById('meetings').innerHTML = renderMeetingsTab(data);
     document.getElementById('clients').innerHTML  = renderClientsTab(data);
-
-    // Wire up checkable task rows (To-Do tab only). Buttons/links inside a row must not toggle it.
-    content.querySelectorAll('.ai[data-id]').forEach(el => {
-      if (isDone(dateKey, el.dataset.id)) el.classList.add('done');
-      el.addEventListener('click', () => toggle(dateKey, el.dataset.id, el));
-    });
-    content.querySelectorAll('.ai details, .ai a, .ai button').forEach(el => {
-      el.addEventListener('click', e => e.stopPropagation());
-    });
+    wireTodo(dateKey);
 
     currentDateKey = dateKey;
     loading.classList.add('hidden');
@@ -669,7 +711,8 @@ function scheduleRow(item, dateKey) {
 }
 
 // A single checkable task row (used by MIT, Quick Wins and every quadrant).
-function renderTaskRow(item, dateKey, ydState, opts = {}) {
+// Carries a drag handle (⠿) and a ⋯ menu button for moving/reordering/deleting.
+function renderTaskRow(item, dateKey, ydState) {
   const carried  = item.carried || (ydState.hasOwnProperty(item.id) && !ydState[item.id]);
   const bodyText = item.body || item.detail || '';
   const vbadge   = item.verification ? `<span class="vbadge vbadge-${item.verification}">${vbadgeLabel(item.verification)}</span>` : '';
@@ -678,20 +721,22 @@ function renderTaskRow(item, dateKey, ydState, opts = {}) {
   const meta     = (src || dur) ? `<div class="task-meta">${src}${dur}</div>` : '';
   const sched    = scheduleRow(item, dateKey);   // self-hides unless the task has a slot (deadline)
   return `<div class="ai" data-id="${esc(item.id)}">
+    <span class="drag-h" data-drag="${esc(item.id)}" aria-hidden="true">⠿</span>
     <div class="chk"></div>
     <div class="it">
       <div class="ttl">${esc(item.title || '')}${carried ? '<span class="carry">Carried over</span>' : ''}${vbadge}</div>
       ${bodyText ? `<div class="dtl">${bodyText}</div>` : ''}
       ${meta}${sched}
     </div>
+    <button class="task-menu-btn" data-menu="${esc(item.id)}" aria-label="Task actions">⋯</button>
   </div>`;
 }
 
-function renderQuad(key, title, subtitle, items, dateKey, ydState, schedulable) {
+function renderQuad(key, title, subtitle, items, dateKey, ydState) {
   const body = items.length
-    ? items.map(t => renderTaskRow(t, dateKey, ydState, { schedulable })).join('')
-    : `<div class="quad-empty">Nothing here.</div>`;
-  return `<div class="quad quad-${key}">
+    ? items.map(t => renderTaskRow(t, dateKey, ydState)).join('')
+    : `<div class="quad-empty">Drop tasks here.</div>`;
+  return `<div class="quad quad-${key}" data-drop="${key}">
     <div class="quad-h"><span class="quad-t">${title}</span><span class="quad-s">${subtitle}</span></div>
     <div class="quad-body">${body}</div>
   </div>`;
@@ -699,46 +744,38 @@ function renderQuad(key, title, subtitle, items, dateKey, ydState, schedulable) 
 
 // ── To-Do tab ────────────────────────────────────────────────────────────────
 function renderTodoTab(data, dateKey, ydState) {
-  const s     = data.sections || {};
-  const tasks = collectTasks(s);
+  const c = computeTodo(dateKey);
 
   let html = `<div class="ph-note ph-am">☀️ <strong>Power Hour · ${esc(POWER_HOUR)}</strong> — you focus best in the morning, so knock out your MIT and deep work now. Keep meetings for the afternoon.</div>`;
+  html += `<div class="addtask-bar" id="addtask-bar"></div>`;
 
-  if (!tasks.length) {
-    html += `<div class="section"><div class="empty">No tasks today. 🎉</div></div>`;
+  if (!c.tasks.length) {
+    html += `<div class="section"><div class="empty">No tasks yet — add one with ＋ Add task above.</div></div>`;
     html += `<div class="footer">Generated by Claude · ${esc(data.date || dateKey)}</div>`;
     return html;
   }
 
-  const mit       = pickMIT(tasks);
-  const rest      = tasks.filter(t => t !== mit);
-  const quick     = rest.filter(isQuick);
-  const scheduled = rest.filter(t => !isQuick(t));
-
-  const quads = { do: [], schedule: [], delegate: [], eliminate: [] };
-  scheduled.forEach(t => quads[classify(t).quadrant].push(t));
-
   // MIT — the one thing
-  if (mit) {
+  if (c.mit) {
     html += `<div class="mit-wrap">
       <div class="mit-label">🎯 Most Important Task</div>
-      ${renderTaskRow(mit, dateKey, ydState, { schedulable: true })}
+      ${renderTaskRow(c.mit, dateKey, ydState)}
     </div>`;
   }
 
-  // Quick wins — 5-minute rule
-  if (quick.length) {
-    html += `<div class="section"><div class="sh sh-quick">⚡ Quick Wins · under 5 min — do these now</div>`
-          + quick.map(t => renderTaskRow(t, dateKey, ydState, {})).join('')
-          + `</div>`;
-  }
+  // Quick wins — 5-minute rule (also a drop target)
+  html += `<div class="section" data-drop="quick"><div class="sh sh-quick">⚡ Quick Wins · under 5 min — do these now</div>`
+        + (c.quick.length
+            ? c.quick.map(t => renderTaskRow(t, dateKey, ydState)).join('')
+            : `<div class="quad-empty">Drag ≤5-min tasks here.</div>`)
+        + `</div>`;
 
   // Eisenhower matrix
-  html += `<div class="matrix-label">🧭 Eisenhower Matrix</div><div class="matrix">`
-        + renderQuad('do',        '🔴 Do First',  'Urgent + Important',        quads.do,        dateKey, ydState, true)
-        + renderQuad('schedule',  '🔵 Schedule',  'Important · Not Urgent',    quads.schedule,  dateKey, ydState, true)
-        + renderQuad('delegate',  '🟡 Delegate',  'Urgent · Not Important',    quads.delegate,  dateKey, ydState, false)
-        + renderQuad('eliminate', '⚪ Eliminate', 'Not Urgent · Not Important', quads.eliminate, dateKey, ydState, false)
+  html += `<div class="matrix-label">🧭 Eisenhower Matrix · drag a task or tap ⋯ to move it</div><div class="matrix">`
+        + renderQuad('do',        '🔴 Do First',  'Urgent + Important',         c.quads.do,        dateKey, ydState)
+        + renderQuad('schedule',  '🔵 Schedule',  'Important · Not Urgent',     c.quads.schedule,  dateKey, ydState)
+        + renderQuad('delegate',  '🟡 Delegate',  'Urgent · Not Important',     c.quads.delegate,  dateKey, ydState)
+        + renderQuad('eliminate', '⚪ Eliminate', 'Not Urgent · Not Important', c.quads.eliminate, dateKey, ydState)
         + `</div>`;
 
   html += `<div class="footer">Generated by Claude · ${esc(data.date || dateKey)}</div>`;
@@ -928,6 +965,284 @@ function renderItem(item, dateKey, ydState, type) {
       ${item.suggestedSlot ? `<div class="slot-time">🕐 ${esc(item.suggestedSlot)}</div>` : ''}
     </div>
   </div>`;
+}
+
+// ── Manual task edits: persistence ───────────────────────────────────────────
+async function loadTasksState() {
+  try { const raw = await graph('GET', TASKS_URI); tasksState = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {}; }
+  catch { tasksState = {}; }
+}
+async function saveTasksState() {
+  try { await graph('PUT', TASKS_URI, JSON.stringify(tasksState)); }
+  catch (e) { console.error('Could not save task edits:', e); }
+}
+function getTS(dateKey) {
+  const t = tasksState[dateKey] || (tasksState[dateKey] = {});
+  if (!t.overrides) t.overrides = {};
+  if (!t.manual)    t.manual    = [];
+  return t;
+}
+async function commitTasks() { rerenderTodo(); await saveTasksState(); }
+
+// ── Manual task edits: resolution (MIT / quadrant / ordering) ─────────────────
+function resolveMIT(tasks, ov) {
+  const explicit = tasks.find(t => ov[t.id] && ov[t.id].mit === true);
+  if (explicit) return explicit;
+  const candidates = tasks.filter(t => !(ov[t.id] && ov[t.id].mit === false));
+  return pickMIT(candidates);
+}
+function effQuadrant(t, ov) {
+  const o = ov[t.id];
+  if (o && o.quadrant) return o.quadrant;      // manual override wins
+  if (isQuick(t)) return 'quick';               // 5-minute rule
+  return classify(t).quadrant;                  // Eisenhower default
+}
+// Merge skill tasks + manual tasks, apply overrides, and bucket everything.
+function computeTodo(dateKey) {
+  const s  = (digestData && digestData.sections) || {};
+  const ts = getTS(dateKey);
+  const ov = ts.overrides;
+  let tasks = collectTasks(s).concat(ts.manual);
+  tasks = tasks.filter(t => !(ov[t.id] && ov[t.id].deleted));
+
+  const mit  = tasks.length ? resolveMIT(tasks, ov) : null;
+  const rest = tasks.filter(t => t !== mit);
+  const quick = [], quads = { do: [], schedule: [], delegate: [], eliminate: [] };
+  rest.forEach(t => { const q = effQuadrant(t, ov); (q === 'quick' ? quick : quads[q]).push(t); });
+
+  const sortB = arr => arr.slice().sort((a, b) =>
+    ((ov[a.id] && ov[a.id].order) ?? 9999) - ((ov[b.id] && ov[b.id].order) ?? 9999));
+  return {
+    tasks, mit, ov,
+    quick: sortB(quick),
+    quads: { do: sortB(quads.do), schedule: sortB(quads.schedule), delegate: sortB(quads.delegate), eliminate: sortB(quads.eliminate) }
+  };
+}
+
+// ── Wiring (run after every To-Do render) ─────────────────────────────────────
+function wireTodo(dateKey) {
+  const content = document.getElementById('content');
+  content.querySelectorAll('.ai[data-id]').forEach(el => {
+    if (isDone(dateKey, el.dataset.id)) el.classList.add('done');
+    el.addEventListener('click', () => { if (justDragged) return; toggle(dateKey, el.dataset.id, el); });
+  });
+  content.querySelectorAll('.ai details, .ai a, .ai button, .ai .drag-h').forEach(el =>
+    el.addEventListener('click', e => e.stopPropagation()));
+  content.querySelectorAll('[data-menu]').forEach(btn =>
+    btn.addEventListener('click', e => { e.stopPropagation(); openTaskMenu(btn.dataset.menu, btn); }));
+  content.querySelectorAll('[data-drag]').forEach(h =>
+    h.addEventListener('pointerdown', e => startDrag(e, h.dataset.drag)));
+  renderAddTaskBar();
+}
+function rerenderTodo() {
+  const content = document.getElementById('content');
+  content.innerHTML = renderTodoTab(digestData, digestDateKey, digestYdState);
+  wireTodo(digestDateKey);
+  refreshProgress(digestDateKey);
+}
+
+// ── Edit operations ───────────────────────────────────────────────────────────
+function setQuadrant(id, q) {
+  const dk = digestDateKey;
+  const wasMit = (computeTodo(dk).mit || {}).id === id;
+  const ov = getTS(dk).overrides;
+  (ov[id] = ov[id] || {}).quadrant = q;
+  delete ov[id].order;                // append to the new quadrant
+  if (wasMit) ov[id].mit = false;     // moving the MIT into a quadrant clears MIT
+  commitTasks();
+}
+function setMIT(id, on) {
+  const ov = getTS(digestDateKey).overrides;
+  if (on) { for (const k in ov) if (ov[k] && ov[k].mit) ov[k].mit = false; (ov[id] = ov[id] || {}).mit = true; }
+  else (ov[id] = ov[id] || {}).mit = false;
+  commitTasks();
+}
+function moveTask(id, dir) {
+  const c = computeTodo(digestDateKey);
+  const buckets = { quick: c.quick, ...c.quads };
+  let arr = null;
+  for (const k in buckets) if (buckets[k].some(t => t.id === id)) { arr = buckets[k].slice(); break; }
+  if (!arr) return;
+  const i = arr.findIndex(t => t.id === id);
+  const j = dir < 0 ? i - 1 : i + 1;
+  if (j < 0 || j >= arr.length) return;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  const ov = getTS(digestDateKey).overrides;
+  arr.forEach((t, idx) => { (ov[t.id] = ov[t.id] || {}).order = idx; });
+  commitTasks();
+}
+function deleteTask(id) {
+  const ts = getTS(digestDateKey);
+  if (ts.manual.some(m => m.id === id)) ts.manual = ts.manual.filter(m => m.id !== id);
+  else (ts.overrides[id] = ts.overrides[id] || {}).deleted = true;
+  commitTasks();
+}
+function dropTask(id, targetQ, beforeId) {
+  const dk = digestDateKey;
+  const wasMit = (computeTodo(dk).mit || {}).id === id;
+  const ov = getTS(dk).overrides;
+  (ov[id] = ov[id] || {}).quadrant = targetQ;
+  delete ov[id].deleted;
+  if (wasMit) ov[id].mit = false;
+  const c = computeTodo(dk);
+  const arr = (targetQ === 'quick' ? c.quick : c.quads[targetQ]).map(t => t.id).filter(x => x !== id);
+  const pos = beforeId ? arr.indexOf(beforeId) : -1;
+  if (pos < 0) arr.push(id); else arr.splice(pos, 0, id);
+  arr.forEach((tid, i) => { (ov[tid] = ov[tid] || {}).order = i; });
+  commitTasks();
+}
+
+// ── Drag and drop (pointer-based; works on touch + mouse) ─────────────────────
+function clearDropTargets() { document.querySelectorAll('.drop-target').forEach(x => x.classList.remove('drop-target')); }
+function startDrag(e, id) {
+  const row = e.target.closest('.ai');
+  if (!row) return;
+  const startX = e.clientX, startY = e.clientY;
+  let started = false, ghost = null, lastDrop = null;
+  const move = ev => {
+    if (!started) {
+      if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 6) return;
+      started = true;
+      ghost = row.cloneNode(true);
+      ghost.classList.add('drag-ghost');
+      ghost.style.width = row.offsetWidth + 'px';
+      document.body.appendChild(ghost);
+      row.classList.add('dragging-src');
+    }
+    ev.preventDefault();
+    ghost.style.left = (ev.clientX - ghost.offsetWidth / 2) + 'px';
+    ghost.style.top  = (ev.clientY - 20) + 'px';
+    ghost.style.display = 'none';
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    ghost.style.display = '';
+    clearDropTargets();
+    const cont = el && el.closest('[data-drop]');
+    if (cont) {
+      cont.classList.add('drop-target');
+      const overRow = el.closest('.ai');
+      lastDrop = { q: cont.dataset.drop, beforeId: (overRow && overRow.dataset.id !== id) ? overRow.dataset.id : null };
+    } else lastDrop = null;
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    if (!started) return;
+    clearDropTargets();
+    if (ghost) ghost.remove();
+    row.classList.remove('dragging-src');
+    justDragged = true; setTimeout(() => { justDragged = false; }, 60);
+    if (lastDrop) dropTask(id, lastDrop.q, lastDrop.beforeId);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+
+// ── Task action menu ──────────────────────────────────────────────────────────
+let menuEl = null, backdropEl = null;
+function closeTaskMenu() {
+  if (menuEl) { menuEl.remove(); menuEl = null; }
+  if (backdropEl) { backdropEl.remove(); backdropEl = null; }
+}
+function openTaskMenu(id, btn) {
+  closeTaskMenu();
+  const isMit    = (computeTodo(digestDateKey).mit || {}).id === id;
+  const isManual = getTS(digestDateKey).manual.some(m => m.id === id);
+  backdropEl = document.createElement('div');
+  backdropEl.className = 'tmenu-backdrop';
+  backdropEl.addEventListener('click', closeTaskMenu);
+  document.body.appendChild(backdropEl);
+  menuEl = document.createElement('div');
+  menuEl.className = 'tmenu';
+  menuEl.innerHTML =
+    `<div class="tmenu-label">Move to</div>
+     <button data-a="q:do">🔴 Do First</button>
+     <button data-a="q:schedule">🔵 Schedule</button>
+     <button data-a="q:delegate">🟡 Delegate</button>
+     <button data-a="q:eliminate">⚪ Eliminate</button>
+     <button data-a="q:quick">⚡ Quick Win</button>
+     <div class="tmenu-sep"></div>
+     <button data-a="mit">${isMit ? '☆ Clear MIT' : '★ Set as MIT'}</button>
+     <button data-a="up">↑ Move up</button>
+     <button data-a="down">↓ Move down</button>
+     <div class="tmenu-sep"></div>
+     <button data-a="del">🗑 ${isManual ? 'Delete task' : 'Remove for today'}</button>`;
+  document.body.appendChild(menuEl);
+  const r = btn.getBoundingClientRect();
+  const left = Math.max(8, Math.min(r.left, window.innerWidth  - menuEl.offsetWidth  - 8));
+  let   top  = r.bottom + 4;
+  if (top + menuEl.offsetHeight > window.innerHeight) top = Math.max(8, r.top - menuEl.offsetHeight - 4);
+  menuEl.style.left = left + 'px';
+  menuEl.style.top  = top + 'px';
+  menuEl.querySelectorAll('button').forEach(b => b.addEventListener('click', () => handleMenu(id, b.dataset.a)));
+}
+function handleMenu(id, a) {
+  closeTaskMenu();
+  if (a.startsWith('q:')) setQuadrant(id, a.slice(2));
+  else if (a === 'mit')  setMIT(id, !((computeTodo(digestDateKey).mit || {}).id === id));
+  else if (a === 'up')   moveTask(id, -1);
+  else if (a === 'down') moveTask(id, 1);
+  else if (a === 'del')  deleteTask(id);
+}
+
+// ── Add task ──────────────────────────────────────────────────────────────────
+let addTaskOpen = false;
+function renderAddTaskBar() {
+  const bar = document.getElementById('addtask-bar');
+  if (!bar) return;
+  if (!addTaskOpen) {
+    bar.innerHTML = `<button class="addtask-btn" id="atb">＋ Add task</button>`;
+    document.getElementById('atb').addEventListener('click', () => { addTaskOpen = true; renderAddTaskBar(); });
+    return;
+  }
+  bar.innerHTML = `<div class="addtask-form">
+    <input id="at-title" placeholder="Task title" autocomplete="off" />
+    <textarea id="at-body" rows="2" placeholder="Details (optional)"></textarea>
+    <div class="row2">
+      <select id="at-quad">
+        <option value="quick">⚡ Quick win (≤5 min)</option>
+        <option value="do">🔴 Do First</option>
+        <option value="schedule" selected>🔵 Schedule</option>
+        <option value="delegate">🟡 Delegate</option>
+        <option value="eliminate">⚪ Eliminate</option>
+      </select>
+      <input id="at-dur" type="number" min="1" inputmode="numeric" placeholder="Minutes" />
+    </div>
+    <div class="row2">
+      <input id="at-due" type="date" />
+      <label style="flex:1;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+        <input type="checkbox" id="at-mit" style="width:auto;margin:0" /> Set as MIT
+      </label>
+    </div>
+    <div class="addtask-actions">
+      <button class="at-cancel" id="at-cancel">Cancel</button>
+      <button class="at-save" id="at-save">Add task</button>
+    </div>
+  </div>`;
+  document.getElementById('at-cancel').addEventListener('click', () => { addTaskOpen = false; renderAddTaskBar(); });
+  document.getElementById('at-save').addEventListener('click', saveNewTask);
+  document.getElementById('at-title').focus();
+}
+function saveNewTask() {
+  const title = document.getElementById('at-title').value.trim();
+  if (!title) { document.getElementById('at-title').focus(); return; }
+  const quad = document.getElementById('at-quad').value;
+  const durV = parseInt(document.getElementById('at-dur').value, 10);
+  const due  = document.getElementById('at-due').value;
+  const mit  = document.getElementById('at-mit').checked;
+  const body = document.getElementById('at-body').value.trim();
+  const id   = 'man-' + Date.now().toString(36);
+  const task = { id, title, body, source: 'manual' };
+  if (!isNaN(durV)) task.durationMin = durV;
+  if (due) { task.dueDate = due; task.slotStart = due + 'T08:00:00'; task.suggestedSlot = '8:00–8:30 AM'; }
+
+  const ts = getTS(digestDateKey);
+  ts.manual.push(task);
+  const ov = ts.overrides;
+  (ov[id] = ov[id] || {}).quadrant = quad;
+  if (mit) { for (const k in ov) if (ov[k] && ov[k].mit) ov[k].mit = false; ov[id].mit = true; }
+
+  addTaskOpen = false;
+  commitTasks();
 }
 
 // ── Seed test data ─────────────────────────────────────────────────────────
