@@ -819,7 +819,7 @@ function renderClientsTab(data) {
 }
 
 // ── Client ownership (registry read/write + Owner selector) ──────────────────
-const OWNERS = ['Nicolas Ferron', 'Edward Ko'];
+const OWNERS = ['Nicolas Ferron', 'Edward Ko', 'Unassigned'];
 
 async function loadClientRegistry() {
   try {
@@ -1385,7 +1385,23 @@ async function seedTestDigest() {
           activity: "Mike, Sarah, and Macfarlane accepted Training and Go-Live invites; column mapping confirmed working.",
           nextStep: "Deliver training today 3:30 PM; hold the go-live green-light call Thursday.",
           contacts: ["mike@borderbrokers.com", "sarah@borderbrokers.com"],
-          lastMeeting: { title: "Training // Border Brokers x Mely", date: "2026-06-10", url: "https://tldv.io/" } }
+          lastMeeting: { title: "Training // Border Brokers x Mely", date: "2026-06-10", url: "https://tldv.io/" } },
+        { id: "cli-test-4", name: "GHY International", status: "critical",
+          owner: "Edward Ko", domain: "ghy.com",
+          industry: "Logistics And Supply Chain", location: "Winnipeg, ON, Canada", volume: "~30,000 shipments/mo",
+          state: "Launch blocked",
+          activity: "First production test passed 6 of 14 transactions; team-assignment config and Part Code Lookup must be finished by Tuesday to protect the Aug 10 launch.",
+          nextStep: "Send today's progress update, chase Samantha for the vendor-code Excel, and get GHY to open the Descartes request.",
+          contacts: ["tarar@ghy.com", "samanthak@ghy.com"],
+          lastMeeting: { title: "GHY x Mely AI - v3.6 decision", date: "2026-07-13", url: "https://tldv.io/" } },
+        { id: "cli-test-5", name: "KWE (Kintetsu World Express)", status: "critical",
+          owner: "Edward Ko", domain: "am.kwe.com",
+          industry: "Logistics And Supply Chain", location: "Tokyo, Japan", volume: "~10,000 shipments/mo",
+          state: "Onboarding",
+          activity: "Access settled; cascading part-code logic and full part-library load are the remaining gate before production.",
+          nextStep: "Land the cascading part-code logic and library load ahead of Friday's internal review.",
+          contacts: ["margaret.plewa@am.kwe.com", "jack.hood@am.kwe.com"],
+          lastMeeting: { title: "KWE x Mely AI - Show and Tell 4", date: "2026-08-12", url: "https://tldv.io/" } }
       ]
     }
   };
