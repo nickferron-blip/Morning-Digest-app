@@ -299,6 +299,10 @@
               font-size: 15px; line-height: 1; cursor: grab; opacity: .45; touch-action: none;
               user-select: none; -webkit-user-select: none; }
     .drag-h:active { cursor: grabbing; }
+    .ord-num { flex-shrink: 0; width: 30px; align-self: center; font-size: 12px; font-family: inherit;
+               text-align: center; padding: 3px 0; border: 1px solid var(--border); border-radius: 6px;
+               background: var(--bg); color: var(--text); -moz-appearance: textfield; appearance: textfield; }
+    .ord-num::-webkit-outer-spin-button, .ord-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     .task-menu-btn { flex-shrink: 0; align-self: flex-start; background: none; border: none; color: var(--muted);
                      font-size: 18px; line-height: 1; padding: 0 4px; cursor: pointer; border-radius: 6px; }
     .task-menu-btn:hover { background: var(--bg); }
@@ -396,6 +400,8 @@ const TENANT_ID   = 'add1a0bc-b68d-4df0-aefd-d9999f26df0c';
 const FOLDER      = 'Claude Main Folder/Apps/morning-digest-app/Daily json files';
 const RECAPS_FOLDER = FOLDER + '/Meeting Recap emails';  // Recaps tab reads/writes here
 const POWER_HOUR    = '8:00–11:00 AM';   // your standing morning deep-work block (display only)
+const POWER_HOUR_START = 8;   // 8 AM — start of the morning deep-work block
+const POWER_HOUR_END   = 11;  // 11 AM — end of it (past slots roll to the next opening)
 // ──────────────────────────────────────────────────────────────────────────
 
 const SCOPES = ['User.Read', 'Files.ReadWrite'];
@@ -703,25 +709,72 @@ function taskEventUrl(item, dateKey) {
   return outlookEventUrl({ subject: item.title || 'Task', start, end, body });
 }
 
-// Human date label from an ISO slotStart (e.g. "Thu, Aug 14"). Empty if none.
-function formatSlotDateLabel(item) {
-  if (!item.slotStart) return '';
-  const d = new Date(item.slotStart);
-  if (isNaN(d)) return '';
-  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+// ── Slot scheduling: never suggest a time in the past ─────────────────────────
+// Slots are generated in the morning for the morning Power Hour, so by the time
+// Nick looks they may have passed. reflowSlots() recomputes display slots: future
+// slots stay put; past ones are stacked forward from the next Power Hour opening,
+// in their original order, so the suggestion is always actionable.
+let effSlots = {};   // taskId -> { startISO, endISO, label, rolled }
+
+function toLocalISO(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:00`;
+}
+function fmtSlot(start, end) {
+  const day = start.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const t = x => x.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${day} · ${t(start)}–${t(end)}`;
+}
+function nextPowerHourStart(now) {
+  const d = new Date(now);
+  d.setSeconds(0, 0);
+  d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15);
+  if (d.getHours() < POWER_HOUR_START) d.setHours(POWER_HOUR_START, 0, 0, 0);
+  else if (d.getHours() >= POWER_HOUR_END) { d.setDate(d.getDate() + 1); d.setHours(POWER_HOUR_START, 0, 0, 0); }
+  return d;
+}
+function reflowSlots(tasks) {
+  effSlots = {};
+  const now = new Date();
+  const items = tasks
+    .map(t => ({ t, start: t.slotStart ? new Date(t.slotStart) : null }))
+    .filter(x => x.start && !isNaN(x.start))
+    .sort((a, b) => a.start - b.start);
+  let cursor = null;
+  items.forEach(({ t, start }) => {
+    const endD  = t.slotEnd ? new Date(t.slotEnd) : null;
+    const durMs = (endD && !isNaN(endD)) ? (endD - start) : ((t.durationMin || 30) * 60000);
+    let s, rolled = false;
+    if (start >= now) { s = start; }
+    else { rolled = true; cursor = cursor || nextPowerHourStart(now); s = new Date(cursor); }
+    const e = new Date(s.getTime() + durMs);
+    if (rolled) {
+      cursor = new Date(e);
+      if (cursor.getHours() >= POWER_HOUR_END) { cursor.setDate(cursor.getDate() + 1); cursor.setHours(POWER_HOUR_START, 0, 0, 0); }
+    }
+    effSlots[t.id] = { startISO: toLocalISO(s), endISO: toLocalISO(e), label: fmtSlot(s, e), rolled };
+  });
 }
 
-// Only shown when the skill assigned a slot (i.e. the task has a clear deadline).
+// Slot chip + one-tap Outlook add. Uses the reflowed (never-in-the-past) slot.
 function scheduleRow(item, dateKey) {
   if (!item.suggestedSlot && !item.slotStart) return '';
-  const when = [formatSlotDateLabel(item), item.suggestedSlot].filter(Boolean).join(' · ');
-  const chip = when ? `<span class="slot-time">🕐 ${esc(when)}</span>` : '';
-  return `<div class="sched-row">${chip}<a class="sched-btn" href="${taskEventUrl(item, dateKey)}" target="_blank" rel="noopener">＋ Add to Outlook</a></div>`;
+  const eff = effSlots[item.id];
+  let label, url;
+  if (eff) {
+    label = eff.label + (eff.rolled ? ' · moved up' : '');
+    const src = item.source ? `\n\nSource: ${sourceLabel(item.source)}` : '';
+    url = outlookEventUrl({ subject: item.title || 'Task', start: eff.startISO, end: eff.endISO, body: (item.body || item.detail || '') + src });
+  } else {
+    label = item.suggestedSlot || '';
+    url = taskEventUrl(item, dateKey);
+  }
+  return `<div class="sched-row">${label ? `<span class="slot-time">🕐 ${esc(label)}</span>` : ''}<a class="sched-btn" href="${esc(url)}" target="_blank" rel="noopener">＋ Add to Outlook</a></div>`;
 }
 
 // A single checkable task row (used by MIT, Quick Wins and every quadrant).
 // Carries a drag handle (⠿) and a ⋯ menu button for moving/reordering/deleting.
-function renderTaskRow(item, dateKey, ydState) {
+function renderTaskRow(item, dateKey, ydState, pos, bucket) {
   const carried  = item.carried || (ydState.hasOwnProperty(item.id) && !ydState[item.id]);
   const bodyText = item.body || item.detail || '';
   const vbadge   = item.verification ? `<span class="vbadge vbadge-${item.verification}">${vbadgeLabel(item.verification)}</span>` : '';
@@ -729,7 +782,11 @@ function renderTaskRow(item, dateKey, ydState) {
   const dur      = (item.durationMin != null) ? `<span class="dur">~${item.durationMin}m</span>` : '';
   const meta     = (src || dur) ? `<div class="task-meta">${src}${dur}</div>` : '';
   const sched    = scheduleRow(item, dateKey);   // self-hides unless the task has a slot (deadline)
+  const ordInput = (pos != null && bucket)
+    ? `<input class="ord-num" type="number" min="1" value="${pos}" data-ord="${esc(item.id)}" data-q="${esc(bucket)}" aria-label="Position — type a number to reorder" />`
+    : '';
   return `<div class="ai" data-id="${esc(item.id)}">
+    ${ordInput}
     <span class="drag-h" data-drag="${esc(item.id)}" aria-hidden="true">⠿</span>
     <div class="chk"></div>
     <div class="it">
@@ -743,7 +800,7 @@ function renderTaskRow(item, dateKey, ydState) {
 
 function renderQuad(key, title, subtitle, items, dateKey, ydState) {
   const body = items.length
-    ? items.map(t => renderTaskRow(t, dateKey, ydState)).join('')
+    ? items.map((t, i) => renderTaskRow(t, dateKey, ydState, i + 1, key)).join('')
     : `<div class="quad-empty">Drop tasks here.</div>`;
   return `<div class="quad quad-${key}" data-drop="${key}">
     <div class="quad-h"><span class="quad-t">${title}</span><span class="quad-s">${subtitle}</span></div>
@@ -754,6 +811,7 @@ function renderQuad(key, title, subtitle, items, dateKey, ydState) {
 // ── To-Do tab ────────────────────────────────────────────────────────────────
 function renderTodoTab(data, dateKey, ydState) {
   const c = computeTodo(dateKey);
+  reflowSlots(c.tasks);
 
   let html = `<div class="ph-note ph-am">☀️ <strong>Power Hour · ${esc(POWER_HOUR)}</strong> — you focus best in the morning, so knock out your MIT and deep work now. Keep meetings for the afternoon.</div>`;
   html += `<div class="addtask-bar" id="addtask-bar"></div>`;
@@ -775,12 +833,12 @@ function renderTodoTab(data, dateKey, ydState) {
   // Quick wins — 5-minute rule (also a drop target)
   html += `<div class="section" data-drop="quick"><div class="sh sh-quick">⚡ Quick Wins · under 5 min — do these now</div>`
         + (c.quick.length
-            ? c.quick.map(t => renderTaskRow(t, dateKey, ydState)).join('')
+            ? c.quick.map((t, i) => renderTaskRow(t, dateKey, ydState, i + 1, 'quick')).join('')
             : `<div class="quad-empty">Drag ≤5-min tasks here.</div>`)
         + `</div>`;
 
   // Eisenhower matrix
-  html += `<div class="matrix-label">🧭 Eisenhower Matrix · drag a task or tap ⋯ to move it</div><div class="matrix">`
+  html += `<div class="matrix-label">🧭 Eisenhower Matrix · drag, edit the # to reorder, or tap ⋯</div><div class="matrix">`
         + renderQuad('do',        '🔴 Do First',  'Urgent + Important',         c.quads.do,        dateKey, ydState)
         + renderQuad('schedule',  '🔵 Schedule',  'Important · Not Urgent',     c.quads.schedule,  dateKey, ydState)
         + renderQuad('delegate',  '🟡 Delegate',  'Urgent · Not Important',     c.quads.delegate,  dateKey, ydState)
@@ -1104,12 +1162,14 @@ function wireTodo(dateKey) {
     if (isDone(dateKey, el.dataset.id)) el.classList.add('done');
     el.addEventListener('click', () => { if (justDragged) return; toggle(dateKey, el.dataset.id, el); });
   });
-  content.querySelectorAll('.ai details, .ai a, .ai button, .ai .drag-h').forEach(el =>
+  content.querySelectorAll('.ai details, .ai a, .ai button, .ai .drag-h, .ai input').forEach(el =>
     el.addEventListener('click', e => e.stopPropagation()));
   content.querySelectorAll('[data-menu]').forEach(btn =>
     btn.addEventListener('click', e => { e.stopPropagation(); openTaskMenu(btn.dataset.menu, btn); }));
   content.querySelectorAll('[data-drag]').forEach(h =>
     h.addEventListener('pointerdown', e => startDrag(e, h.dataset.drag)));
+  content.querySelectorAll('.ord-num').forEach(inp =>
+    inp.addEventListener('change', e => { e.stopPropagation(); reorderTo(inp.dataset.ord, inp.dataset.q, parseInt(inp.value, 10) || 1); }));
   renderAddTaskBar();
 }
 function rerenderTodo() {
@@ -1153,6 +1213,19 @@ function deleteTask(id) {
   const ts = getTS(digestDateKey);
   if (ts.manual.some(m => m.id === id)) ts.manual = ts.manual.filter(m => m.id !== id);
   else (ts.overrides[id] = ts.overrides[id] || {}).deleted = true;
+  commitTasks();
+}
+// Reorder within a bucket by typing a 1-based position.
+function reorderTo(id, q, newPos) {
+  const c = computeTodo(digestDateKey);
+  const bucket = (q === 'quick') ? c.quick : (c.quads[q] || null);
+  if (!bucket) return;
+  const ids = bucket.map(t => t.id).filter(x => x !== id);
+  const pos = Math.max(1, Math.min(newPos, ids.length + 1)) - 1;
+  ids.splice(pos, 0, id);
+  const ov = getTS(digestDateKey).overrides;
+  (ov[id] = ov[id] || {}).quadrant = q;   // pin it to this bucket
+  ids.forEach((tid, i) => { (ov[tid] = ov[tid] || {}).order = i; });
   commitTasks();
 }
 function dropTask(id, targetQ, beforeId) {
@@ -1240,8 +1313,6 @@ function openTaskMenu(id, btn) {
      <button data-a="q:quick">⚡ Quick Win</button>
      <div class="tmenu-sep"></div>
      <button data-a="mit">${isMit ? '☆ Clear MIT' : '★ Set as MIT'}</button>
-     <button data-a="up">↑ Move up</button>
-     <button data-a="down">↓ Move down</button>
      <div class="tmenu-sep"></div>
      <button data-a="del">🗑 ${isManual ? 'Delete task' : 'Remove for today'}</button>`;
   document.body.appendChild(menuEl);
