@@ -446,7 +446,7 @@ const RECAPS_FOLDER = FOLDER + '/Meeting Recap emails';  // Recaps tab reads/wri
 const POWER_HOUR    = '8:00–11:00 AM';   // your standing morning deep-work block (display only)
 const POWER_HOUR_START = 8;   // 8 AM — start of the morning deep-work block
 const POWER_HOUR_END   = 11;  // 11 AM — end of it (past slots roll to the next opening)
-const INTAKE_FORM_URL  = '';  // OneDrive/SharePoint share link to the client connection intake form (step 1.2)
+const INTAKE_FORM_URL  = 'https://melyai1-my.sharepoint.com/my?id=%2Fpersonal%2Fnicolas%5Fferron%5Fmely%5Fai%2FDocuments%2FDocuments%2FOnbaording%2FClients&viewid=c54f5fb9%2D63b3%2D4a20%2Da346%2Dc669e7b22ad5';  // SharePoint location of the client connection intake form (step 1.2)
 // ──────────────────────────────────────────────────────────────────────────
 
 const SCOPES = ['User.Read', 'Files.ReadWrite'];
@@ -1131,11 +1131,17 @@ function obClientEmails(name) {
   return (dc && dc.contacts || []).filter(Boolean).join(',');
 }
 function obProdEmail(name) {
+  const ob = getOB(name);
+  const platform = OB_PLATFORMS.find(p => ob.platforms[p]) || 'VI';
   const to = obClientEmails(name);
-  const subject = `Mely.ai — ${name} is now live in production`;
-  const body = `Hi team,\n\nGreat news — ${name} is now live in production on Mely.ai.\n\n`
-    + `All shipments now flow through the production environment. Our team will keep a close eye on the first batch (hypercare) and follow up on accuracy and any corrections.\n\n`
-    + `Thank you for the partnership through onboarding — reach out anytime.\n\nBest regards,\nNicolas Ferron\nMely.ai`;
+  const subject = `Mely.ai — ${name}: onboarding complete, ready for production`;
+  const body =
+      'Good morning everyone,\n\n'
+    + 'Following the latest production test, I am writing to confirm that the onboarding process has been completed and that we are ready to move to production.\n'
+    + 'At this stage, the only remaining item on the Mely side is to have the production environment synced with your ' + platform + ' production environment, port the memories and connect libraries.\n\n'
+    + 'The expected ready Date: [date]\n\n'
+    + 'Please note that the payment terms are set to monthly billing and that the first invoice should be coming shortly from our Admin Department. Should you prefer an alternative payment arrangement (offered in the MSA), please do not hesitate to let us know.\n\n'
+    + 'Please let me know if you have any questions or require any additional information.';
   const url = 'https://outlook.office.com/mail/deeplink/compose?to=' + encodeURIComponent(to)
     + '&subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
   return `<a class="ob-link" href="${url}" target="_blank" rel="noopener">✉️ Open production go-live email (Outlook)</a>`;
