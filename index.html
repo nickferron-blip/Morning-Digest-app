@@ -328,6 +328,14 @@
     .ob-item input { margin-top: 2px; flex-shrink: 0; }
     .ob-item.done { color: var(--muted); text-decoration: line-through; }
     .ob-hint { font-size: 12px; color: var(--muted); font-style: italic; }
+    .ob-extra { margin: 2px 0 8px 24px; display: flex; flex-direction: column; gap: 6px; }
+    .ob-fld { font-size: 12px; font-family: inherit; padding: 6px 8px; border: 1px solid var(--border);
+              border-radius: 6px; background: var(--bg); color: var(--text); }
+    .ob-role { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .ob-role-lbl { font-size: 11px; font-weight: 700; color: var(--muted); min-width: 74px; }
+    .ob-role .ob-fld { flex: 1 1 120px; min-width: 100px; }
+    .ob-link { display: inline-block; font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none; }
+    .ob-link:hover { text-decoration: underline; }
 
     /* ── Task row controls (drag handle + menu) ────────────────── */
     .ai { position: relative; }
@@ -438,6 +446,7 @@ const RECAPS_FOLDER = FOLDER + '/Meeting Recap emails';  // Recaps tab reads/wri
 const POWER_HOUR    = '8:00–11:00 AM';   // your standing morning deep-work block (display only)
 const POWER_HOUR_START = 8;   // 8 AM — start of the morning deep-work block
 const POWER_HOUR_END   = 11;  // 11 AM — end of it (past slots roll to the next opening)
+const INTAKE_FORM_URL  = '';  // OneDrive/SharePoint share link to the client connection intake form (step 1.2)
 // ──────────────────────────────────────────────────────────────────────────
 
 const SCOPES = ['User.Read', 'Files.ReadWrite'];
@@ -987,7 +996,7 @@ const OB_API_PLATFORMS = ['Visual Importers', 'NetCHB', 'Other'];
 const ONBOARDING_PHASES = [
   { title: '1 · Pre-Onboarding', steps: [
     { id: '1.1', label: 'Loader email (ITMR only)' },
-    { id: '1.2', label: 'Operating-system credentials gathered (see Connections below)' },
+    { id: '1.2', label: 'Send the connection intake form to the client' },
     { id: '1.3', label: 'Roles assigned — Sponsor, Champion, Super User' } ] },
   { title: '2 · Set Environments (Staging + Prod)', steps: [
     { id: '2.1', label: 'Client document type set' },
@@ -1051,6 +1060,7 @@ function getOB(name) {
   const o = onboardingState[name] || (onboardingState[name] = {});
   if (!o.platforms) o.platforms = {};
   if (!o.done) o.done = {};
+  if (!o.fields) o.fields = {};
   return o;
 }
 function obTotalSteps() { return ONBOARDING_PHASES.reduce((n, p) => n + p.steps.length, 0); }
@@ -1076,7 +1086,9 @@ function renderOnboardingBody(name) {
      + `</div>`;
   h += `<div class="ob-sec-label">Steps</div>`;
   ONBOARDING_PHASES.forEach(p => {
-    h += `<div class="ob-phase"><div class="ob-phase-h">${esc(p.title)}</div>` + p.steps.map(s => item('step:' + s.id, s.label)).join('') + `</div>`;
+    h += `<div class="ob-phase"><div class="ob-phase-h">${esc(p.title)}</div>`;
+    p.steps.forEach(s => { h += item('step:' + s.id, s.label) + obStepExtra(name, s.id); });
+    h += `</div>`;
   });
   h += `<div class="ob-sec-label">Connections needed</div>`;
   const groups = ['common', ...OB_PLATFORMS.filter(p => ob.platforms[p])];
@@ -1090,6 +1102,45 @@ function renderOnboardingBody(name) {
   if (groups.length === 1) h += `<div class="ob-hint">Tick the platform(s) above to list the exact connection requirements.</div>`;
   return h;
 }
+// Per-step extras: input fields for 1.1 / 1.3, a doc link for 1.2, an Outlook template for 4.5.
+function obStepExtra(name, id) {
+  if (id === '1.1') return `<div class="ob-extra">${obField(name, '1.1.email', 'Loader email address', 'email')}</div>`;
+  if (id === '1.2') return `<div class="ob-extra">${obIntakeLink()}</div>`;
+  if (id === '1.3') return `<div class="ob-extra">${obRoleRows(name)}</div>`;
+  if (id === '4.5') return `<div class="ob-extra">${obProdEmail(name)}</div>`;
+  return '';
+}
+function obField(name, key, ph, type) {
+  const v = (getOB(name).fields || {})[key] || '';
+  return `<input class="ob-fld" type="${type || 'text'}" data-cli="${esc(name)}" data-obf="${esc(key)}" placeholder="${esc(ph)}" value="${esc(v)}">`;
+}
+function obRoleRows(name) {
+  return ['Sponsor', 'Champion', 'Super User'].map(role => {
+    const rk = role.toLowerCase().replace(/\s+/g, '');
+    return `<div class="ob-role"><span class="ob-role-lbl">${role}</span>`
+      + obField(name, '1.3.' + rk + '.name', 'Name') + obField(name, '1.3.' + rk + '.email', 'Email', 'email') + `</div>`;
+  }).join('');
+}
+function obIntakeLink() {
+  return INTAKE_FORM_URL
+    ? `<a class="ob-link" href="${esc(INTAKE_FORM_URL)}" target="_blank" rel="noopener">📄 Open the connection intake form to send</a>`
+    : `<span class="ob-hint">Add the intake-form link (INTAKE_FORM_URL) in the code to enable this.</span>`;
+}
+function obClientEmails(name) {
+  const dc = (((digestData || {}).sections || {}).clients || []).find(c => c.name === name);
+  return (dc && dc.contacts || []).filter(Boolean).join(',');
+}
+function obProdEmail(name) {
+  const to = obClientEmails(name);
+  const subject = `Mely.ai — ${name} is now live in production`;
+  const body = `Hi team,\n\nGreat news — ${name} is now live in production on Mely.ai.\n\n`
+    + `All shipments now flow through the production environment. Our team will keep a close eye on the first batch (hypercare) and follow up on accuracy and any corrections.\n\n`
+    + `Thank you for the partnership through onboarding — reach out anytime.\n\nBest regards,\nNicolas Ferron\nMely.ai`;
+  const url = 'https://outlook.office.com/mail/deeplink/compose?to=' + encodeURIComponent(to)
+    + '&subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  return `<a class="ob-link" href="${url}" target="_blank" rel="noopener">✉️ Open production go-live email (Outlook)</a>`;
+}
+
 function obUpdateCount(det) {
   const ob = getOB(det.dataset.cli), total = obTotalSteps(), done = obDoneSteps(ob);
   const c = det.querySelector('.ob-count'); if (c) c.textContent = `${done}/${total}`;
@@ -1113,6 +1164,9 @@ function wireObInputs(det) {
       wireObInputs(det);
       saveOnboarding();
     };
+  });
+  det.querySelectorAll('input[data-obf]').forEach(inp => {
+    inp.onchange = () => { getOB(inp.dataset.cli).fields[inp.dataset.obf] = inp.value; saveOnboarding(); };
   });
 }
 
