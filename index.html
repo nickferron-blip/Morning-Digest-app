@@ -1090,16 +1090,6 @@ function renderOnboardingBody(name) {
     p.steps.forEach(s => { h += item('step:' + s.id, s.label) + obStepExtra(name, s.id); });
     h += `</div>`;
   });
-  h += `<div class="ob-sec-label">Connections needed</div>`;
-  const groups = ['common', ...OB_PLATFORMS.filter(p => ob.platforms[p])];
-  groups.forEach(g => {
-    const grp = OB_CONNECTIONS[g]; if (!grp) return;
-    h += `<div class="ob-conn-h">${esc(grp.label)}</div>` + grp.items.map((it, i) => item('conn:' + g + ':' + i, it)).join('');
-  });
-  if (OB_PLATFORMS.some(p => ob.platforms[p] && OB_API_PLATFORMS.includes(p))) {
-    h += `<div class="ob-conn-h">${esc(OB_GENERAL_API.label)}</div>` + OB_GENERAL_API.items.map((it, i) => item('conn:general:' + i, it)).join('');
-  }
-  if (groups.length === 1) h += `<div class="ob-hint">Tick the platform(s) above to list the exact connection requirements.</div>`;
   return h;
 }
 // Per-step extras: input fields for 1.1 / 1.3, a doc link for 1.2, an Outlook template for 4.5.
