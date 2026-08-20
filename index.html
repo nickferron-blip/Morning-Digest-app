@@ -557,6 +557,11 @@ const TASKS_URI = `/me/drive/root:/${FOLDER}/digest-tasks.json:/content`;
 let tasksState = {};
 let justDragged = false;   // suppresses the click-to-complete that can follow a drag
 
+// Cumulative completion memory — survives ID drift and reworded titles across days,
+// and is read by the morning skill so it stops re-creating completed work.
+const LOG_URI = `/me/drive/root:/${FOLDER}/Done/completed-log.json:/content`;
+let completedLog = { items: [] };
+
 // Client-ownership registry (also read by the morning-action-digest skill).
 // The Owner selector on each client card edits this file directly.
 const CLIENTS_URI = `/me/drive/root:/${FOLDER}/clients.json:/content`;
@@ -583,13 +588,42 @@ function completedEarlier(id) {
   return false;
 }
 
+// Content signature — matches the same task even when its ID or wording drifts.
+function normSig(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+function completedKeySet() {
+  const set = new Set();
+  (completedLog.items || []).forEach(x => { if (x.key) set.add(x.key); });
+  return set;
+}
+async function loadCompletedLog() {
+  try {
+    const raw = await graph('GET', LOG_URI);
+    const j = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : null;
+    completedLog = (j && Array.isArray(j.items)) ? j : { items: [] };
+  } catch { completedLog = { items: [] }; }
+}
+async function saveCompletedLog() {
+  try { await graph('PUT', LOG_URI, JSON.stringify(completedLog)); }
+  catch (e) { console.error('Could not save completed-log:', e); }
+}
+function logComplete(id, title, date, done) {
+  if (!completedLog.items) completedLog.items = [];
+  completedLog.items = completedLog.items.filter(x => x.id !== id);   // drop any prior entry for this id
+  if (done) {
+    completedLog.items.push({ id, title, key: normSig(title), date });
+    if (completedLog.items.length > 400) completedLog.items = completedLog.items.slice(-400);
+  }
+}
+
 async function toggle(dateKey, id, el) {
   if (!state[dateKey]) state[dateKey] = {};
   state[dateKey][id] = !state[dateKey][id];
   el.classList.toggle('done', state[dateKey][id]);
+  logComplete(id, el.dataset.title || '', dateKey, state[dateKey][id]);
   refreshProgress(dateKey);
   await saveState();
   await saveDoneFile(dateKey);
+  await saveCompletedLog();
 }
 
 function refreshProgress(dateKey) {
@@ -643,6 +677,7 @@ async function loadDigest() {
     await loadTasksState();
     await loadClientRegistry();
     await loadOnboarding();
+    await loadCompletedLog();
 
     digestData    = data;
     digestDateKey = dateKey;
@@ -847,7 +882,7 @@ function renderTaskRow(item, dateKey, ydState, pos, bucket) {
   const ordInput = (pos != null && bucket)
     ? `<input class="ord-num" type="number" min="1" value="${pos}" data-ord="${esc(item.id)}" data-q="${esc(bucket)}" aria-label="Position — type a number to reorder" />`
     : '';
-  return `<div class="ai" data-id="${esc(item.id)}">
+  return `<div class="ai" data-id="${esc(item.id)}" data-title="${esc(item.title || '')}">
     ${ordInput}
     <span class="drag-h" data-drag="${esc(item.id)}" aria-hidden="true">⠿</span>
     <div class="chk"></div>
@@ -1458,7 +1493,13 @@ function computeTodo(dateKey) {
   const ov = ts.overrides;
   let tasks = collectTasks(s).concat(ts.manual);
   tasks = tasks.filter(t => !(ov[t.id] && ov[t.id].deleted));
-  tasks = tasks.filter(t => !completedEarlier(t.id));   // retired: done on an earlier day, don't resurface
+  const doneKeys = completedKeySet();
+  tasks = tasks.filter(t => {
+    if (isDone(digestDateKey, t.id)) return true;               // completed today → keep (greyed)
+    if (completedEarlier(t.id)) return false;                   // same id completed earlier
+    if (doneKeys.has(normSig(t.title))) return false;           // same task (by title) completed before
+    return true;
+  });
 
   const mit  = tasks.length ? resolveMIT(tasks, ov) : null;
   const rest = tasks.filter(t => t !== mit);
