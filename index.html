@@ -243,6 +243,17 @@
     /* ── Quick wins header ─────────────────────────────────────── */
     .sh-quick { background: #ecfeff; color: #0e7490; border-bottom: 1px solid #a5f3fc; }
     @media (prefers-color-scheme: dark) { .sh-quick { background: #083344; color: #67e8f9; border-color: #155e75; } }
+    .sh-recap { background: #eef2ff; color: #4338ca; border-bottom: 1px solid #c7d2fe; }
+    @media (prefers-color-scheme: dark) { .sh-recap { background: #1e1b4b; color: #a5b4fc; border-color: #312e81; } }
+
+    /* Per-task collapsible detail (used in the recap card) */
+    .task-det { margin-top: 5px; }
+    .task-det > summary { font-size: 11px; font-weight: 600; color: var(--accent); cursor: pointer;
+                          list-style: none; padding: 2px 0; }
+    .task-det > summary::-webkit-details-marker { display: none; }
+    .task-det > summary::before { content: '▶ '; font-size: 9px; }
+    details[open].task-det > summary::before { content: '▼ '; }
+    .task-det-body { padding-top: 2px; }
 
     /* ── Eisenhower matrix ─────────────────────────────────────── */
     .matrix-label { font-size: 11px; font-weight: 700; text-transform: uppercase;
@@ -756,7 +767,7 @@ function pickMIT(tasks) {
 }
 
 function sourceLabel(src) {
-  return ({ tldv: 'tl;dv', teams: 'Teams', meeting: 'Meeting', email: 'Email', calendar: 'Calendar' })[src] || src;
+  return ({ tldv: 'tl;dv', teams: 'Teams', meeting: 'Meeting', email: 'Email', calendar: 'Calendar', recap: 'Recap email' })[src] || src;
 }
 
 // Parse a human slot like "8:00–8:20 AM EDT" into naive local ISO start/end.
@@ -871,7 +882,7 @@ function scheduleRow(item, dateKey) {
 
 // A single checkable task row (used by MIT, Quick Wins and every quadrant).
 // Carries a drag handle (⠿) and a ⋯ menu button for moving/reordering/deleting.
-function renderTaskRow(item, dateKey, ydState, pos, bucket) {
+function renderTaskRow(item, dateKey, ydState, pos, bucket, collapsible) {
   const carried  = item.carried || (ydState.hasOwnProperty(item.id) && !ydState[item.id]);
   const bodyText = item.body || item.detail || '';
   const vbadge   = item.verification ? `<span class="vbadge vbadge-${item.verification}">${vbadgeLabel(item.verification)}</span>` : '';
@@ -882,6 +893,11 @@ function renderTaskRow(item, dateKey, ydState, pos, bucket) {
   const ordInput = (pos != null && bucket)
     ? `<input class="ord-num" type="number" min="1" value="${pos}" data-ord="${esc(item.id)}" data-q="${esc(bucket)}" aria-label="Position — type a number to reorder" />`
     : '';
+  // Detail block: inline by default; tucked behind a disclosure when collapsible (recap card).
+  const detailBlock = `${bodyText ? `<div class="dtl">${bodyText}</div>` : ''}${meta}${sched}`;
+  const details = (collapsible && detailBlock.trim())
+    ? `<details class="task-det"><summary>Details</summary><div class="task-det-body">${detailBlock}</div></details>`
+    : detailBlock;
   return `<div class="ai" data-id="${esc(item.id)}" data-title="${esc(item.title || '')}">
     ${ordInput}
     <span class="drag-h" data-drag="${esc(item.id)}" aria-hidden="true">⠿</span>
@@ -889,8 +905,7 @@ function renderTaskRow(item, dateKey, ydState, pos, bucket) {
     <div class="it">
       <div class="ttl">${esc(item.title || '')}${carried ? '<span class="carry">Carried over</span>' : ''}${vbadge}</div>
       ${item.dueDate ? `<div class="due-line"><span class="due-badge">⏰ Due ${esc(formatDue(item.dueDate))}</span></div>` : ''}
-      ${bodyText ? `<div class="dtl">${bodyText}</div>` : ''}
-      ${meta}${sched}
+      ${details}
     </div>
     <button class="task-menu-btn" data-menu="${esc(item.id)}" aria-label="Task actions">⋯</button>
   </div>`;
@@ -926,6 +941,13 @@ function renderTodoTab(data, dateKey, ydState) {
       <div class="mit-label">🎯 Most Important Task</div>
       ${renderTaskRow(c.mit, dateKey, ydState)}
     </div>`;
+  }
+
+  // Recap-email commitments — grouped in one card, each row opens for details
+  if (c.recap.length) {
+    html += `<div class="section"><div class="sh sh-recap">📧 From your recap emails · ${c.recap.length} committed action${c.recap.length > 1 ? 's' : ''}</div>`
+          + c.recap.map((t, i) => renderTaskRow(t, dateKey, ydState, i + 1, 'recap', true)).join('')
+          + `</div>`;
   }
 
   // Quick wins — 5-minute rule (also a drop target)
@@ -1503,13 +1525,20 @@ function computeTodo(dateKey) {
 
   const mit  = tasks.length ? resolveMIT(tasks, ov) : null;
   const rest = tasks.filter(t => t !== mit);
+
+  // Recap-email todos group into one card, unless manually moved into a bucket.
+  const isRecap = t => t.source === 'recap' && !(ov[t.id] && ov[t.id].quadrant);
+  const recap = rest.filter(isRecap);
+
   const quick = [], quads = { deadline: [], todo: [], delegate: [], eliminate: [] };
-  rest.forEach(t => { const q = effQuadrant(t, ov); (q === 'quick' ? quick : (quads[q] || quads.eliminate)).push(t); });
+  rest.filter(t => !isRecap(t))
+      .forEach(t => { const q = effQuadrant(t, ov); (q === 'quick' ? quick : (quads[q] || quads.eliminate)).push(t); });
 
   const sortB = arr => arr.slice().sort((a, b) =>
     ((ov[a.id] && ov[a.id].order) ?? 9999) - ((ov[b.id] && ov[b.id].order) ?? 9999));
   return {
     tasks, mit, ov,
+    recap: sortB(recap),
     quick: sortB(quick),
     quads: { deadline: sortB(quads.deadline), todo: sortB(quads.todo), delegate: sortB(quads.delegate), eliminate: sortB(quads.eliminate) }
   };
@@ -1578,13 +1607,14 @@ function deleteTask(id) {
 // Reorder within a bucket by typing a 1-based position.
 function reorderTo(id, q, newPos) {
   const c = computeTodo(digestDateKey);
-  const bucket = (q === 'quick') ? c.quick : (c.quads[q] || null);
+  const bucket = (q === 'quick') ? c.quick : (q === 'recap') ? c.recap : (c.quads[q] || null);
   if (!bucket) return;
   const ids = bucket.map(t => t.id).filter(x => x !== id);
   const pos = Math.max(1, Math.min(newPos, ids.length + 1)) - 1;
   ids.splice(pos, 0, id);
   const ov = getTS(digestDateKey).overrides;
-  (ov[id] = ov[id] || {}).quadrant = q;   // pin it to this bucket
+  // 'recap' membership comes from the task's source, not an override — don't pin it as a quadrant.
+  if (q !== 'recap') (ov[id] = ov[id] || {}).quadrant = q;
   ids.forEach((tid, i) => { (ov[tid] = ov[tid] || {}).order = i; });
   commitTasks();
 }
