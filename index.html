@@ -246,7 +246,40 @@
     .sh-recap { background: #eef2ff; color: #4338ca; border-bottom: 1px solid #c7d2fe; }
     @media (prefers-color-scheme: dark) { .sh-recap { background: #1e1b4b; color: #a5b4fc; border-color: #312e81; } }
 
-    /* Per-task collapsible detail (used in the recap card) */
+    /* ── Task detail sidebar (slides in from the right) ────────── */
+    #tp-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 1500; }
+    #taskpanel { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw);
+                 background: var(--card); z-index: 1600; box-shadow: -8px 0 30px rgba(0,0,0,.25);
+                 overflow-y: auto; padding: calc(env(safe-area-inset-top) + 16px) 18px
+                 calc(env(safe-area-inset-bottom) + 24px); }
+    .tp-close { position: absolute; top: calc(env(safe-area-inset-top) + 10px); right: 12px;
+                background: var(--bg); border: 1px solid var(--border); color: var(--text);
+                width: 30px; height: 30px; border-radius: 50%; font-size: 16px; cursor: pointer; line-height: 1; }
+    .tp-kicker { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+                 color: var(--muted); margin-bottom: 4px; }
+    .tp-title { font-size: 17px; font-weight: 700; line-height: 1.35; padding-right: 34px; }
+    .tp-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .tp-body { font-size: 13px; line-height: 1.6; color: var(--text); margin-top: 12px; }
+    .tp-ref { font-size: 12px; line-height: 1.55; color: var(--muted); margin-top: 12px;
+              background: var(--bg); border-radius: 8px; padding: 9px 11px; border-left: 3px solid var(--accent); }
+    .tp-ref a { color: var(--accent); text-decoration: none; }
+    .tp-sec { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+              color: var(--muted); margin: 18px 0 6px; }
+    .tp-prog { height: 4px; border-radius: 99px; background: var(--border); overflow: hidden; margin-bottom: 10px; }
+    .tp-prog > i { display: block; height: 100%; background: #16a34a; border-radius: 99px; transition: width .3s; }
+    .tp-sub { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; line-height: 1.5;
+              padding: 8px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+    .tp-sub:last-child { border-bottom: none; }
+    .tp-sub input { margin-top: 2px; flex-shrink: 0; }
+    .tp-sub.done > .tp-sub-txt { color: var(--muted); text-decoration: line-through; }
+    .tp-sub-ev { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; text-decoration: none; }
+    .sub-chip { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 20px;
+                background: #eef2ff; color: #4338ca; cursor: pointer; }
+    @media (prefers-color-scheme: dark) { .sub-chip { background: #1e1b4b; color: #a5b4fc; } }
+    .ttl-open { cursor: pointer; }
+    .ttl-open:hover { text-decoration: underline; }
+
+    /* Per-task collapsible detail (legacy, unused) */
     .task-det { margin-top: 5px; }
     .task-det > summary { font-size: 11px; font-weight: 600; color: var(--accent); cursor: pointer;
                           list-style: none; padding: 2px 0; }
@@ -440,6 +473,8 @@
 
   <div id="loading"><div class="spinner"></div><span style="color:var(--muted);font-size:14px">Loading your digest…</span></div>
   <div id="error" class="hidden"></div>
+  <div id="tp-backdrop" class="hidden"></div>
+  <aside id="taskpanel" class="hidden" aria-label="Task details"></aside>
   <main id="content" class="hidden"></main>
   <main id="meetings" class="hidden"></main>
   <main id="clients" class="hidden"></main>
@@ -573,6 +608,10 @@ let justDragged = false;   // suppresses the click-to-complete that can follow a
 const LOG_URI = `/me/drive/root:/${FOLDER}/Done/completed-log.json:/content`;
 let completedLog = { items: [] };
 
+// Subtask completion — global (not per-day), keyed "<taskId>::<subId>" so it survives carry-forward.
+const SUBS_URI = `/me/drive/root:/${FOLDER}/Done/subtask-state.json:/content`;
+let subState = {};
+
 // Client-ownership registry (also read by the morning-action-digest skill).
 // The Owner selector on each client card edits this file directly.
 const CLIENTS_URI = `/me/drive/root:/${FOLDER}/clients.json:/content`;
@@ -617,6 +656,21 @@ async function saveCompletedLog() {
   try { await graph('PUT', LOG_URI, JSON.stringify(completedLog)); }
   catch (e) { console.error('Could not save completed-log:', e); }
 }
+// ── Subtask state ────────────────────────────────────────────────────────────
+function subKey(taskId, subId) { return `${taskId}::${subId}`; }
+function isSubDone(taskId, subId) { return !!subState[subKey(taskId, subId)]; }
+async function loadSubState() {
+  try {
+    const raw = await graph('GET', SUBS_URI);
+    const j = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : null;
+    subState = (j && typeof j === 'object') ? j : {};
+  } catch { subState = {}; }
+}
+async function saveSubState() {
+  try { await graph('PUT', SUBS_URI, JSON.stringify(subState)); }
+  catch (e) { console.error('Could not save subtask state:', e); }
+}
+
 function logComplete(id, title, date, done) {
   if (!completedLog.items) completedLog.items = [];
   completedLog.items = completedLog.items.filter(x => x.id !== id);   // drop any prior entry for this id
@@ -689,6 +743,7 @@ async function loadDigest() {
     await loadClientRegistry();
     await loadOnboarding();
     await loadCompletedLog();
+    await loadSubState();
 
     digestData    = data;
     digestDateKey = dateKey;
@@ -893,19 +948,21 @@ function renderTaskRow(item, dateKey, ydState, pos, bucket, collapsible) {
   const ordInput = (pos != null && bucket)
     ? `<input class="ord-num" type="number" min="1" value="${pos}" data-ord="${esc(item.id)}" data-q="${esc(bucket)}" aria-label="Position — type a number to reorder" />`
     : '';
-  // Detail block: inline by default; tucked behind a disclosure when collapsible (recap card).
+  const subs     = item.subtasks || [];
+  const subDone  = subs.filter(s => isSubDone(item.id, s.id)).length;
+  const subChip  = subs.length
+    ? `<span class="sub-chip" data-open="${esc(item.id)}">☑ ${subDone}/${subs.length} subtasks</span>`
+    : '';
   const detailBlock = `${bodyText ? `<div class="dtl">${bodyText}</div>` : ''}${meta}${sched}`;
-  const details = (collapsible && detailBlock.trim())
-    ? `<details class="task-det"><summary>Details</summary><div class="task-det-body">${detailBlock}</div></details>`
-    : detailBlock;
   return `<div class="ai" data-id="${esc(item.id)}" data-title="${esc(item.title || '')}">
     ${ordInput}
     <span class="drag-h" data-drag="${esc(item.id)}" aria-hidden="true">⠿</span>
     <div class="chk"></div>
     <div class="it">
-      <div class="ttl">${esc(item.title || '')}${carried ? '<span class="carry">Carried over</span>' : ''}${vbadge}</div>
+      <div class="ttl"><span class="ttl-open" data-open="${esc(item.id)}">${esc(item.title || '')}</span>${carried ? '<span class="carry">Carried over</span>' : ''}${vbadge}</div>
       ${item.dueDate ? `<div class="due-line"><span class="due-badge">⏰ Due ${esc(formatDue(item.dueDate))}</span></div>` : ''}
-      ${details}
+      ${subChip ? `<div class="task-meta">${subChip}</div>` : ''}
+      ${detailBlock}
     </div>
     <button class="task-menu-btn" data-menu="${esc(item.id)}" aria-label="Task actions">⋯</button>
   </div>`;
@@ -941,13 +998,6 @@ function renderTodoTab(data, dateKey, ydState) {
       <div class="mit-label">🎯 Most Important Task</div>
       ${renderTaskRow(c.mit, dateKey, ydState)}
     </div>`;
-  }
-
-  // Recap-email commitments — grouped in one card, each row opens for details
-  if (c.recap.length) {
-    html += `<div class="section"><div class="sh sh-recap">📧 From your recap emails · ${c.recap.length} committed action${c.recap.length > 1 ? 's' : ''}</div>`
-          + c.recap.map((t, i) => renderTaskRow(t, dateKey, ydState, i + 1, 'recap', true)).join('')
-          + `</div>`;
   }
 
   // Quick wins — 5-minute rule (also a drop target)
@@ -1526,19 +1576,13 @@ function computeTodo(dateKey) {
   const mit  = tasks.length ? resolveMIT(tasks, ov) : null;
   const rest = tasks.filter(t => t !== mit);
 
-  // Recap-email todos group into one card, unless manually moved into a bucket.
-  const isRecap = t => t.source === 'recap' && !(ov[t.id] && ov[t.id].quadrant);
-  const recap = rest.filter(isRecap);
-
   const quick = [], quads = { deadline: [], todo: [], delegate: [], eliminate: [] };
-  rest.filter(t => !isRecap(t))
-      .forEach(t => { const q = effQuadrant(t, ov); (q === 'quick' ? quick : (quads[q] || quads.eliminate)).push(t); });
+  rest.forEach(t => { const q = effQuadrant(t, ov); (q === 'quick' ? quick : (quads[q] || quads.eliminate)).push(t); });
 
   const sortB = arr => arr.slice().sort((a, b) =>
     ((ov[a.id] && ov[a.id].order) ?? 9999) - ((ov[b.id] && ov[b.id].order) ?? 9999));
   return {
     tasks, mit, ov,
-    recap: sortB(recap),
     quick: sortB(quick),
     quads: { deadline: sortB(quads.deadline), todo: sortB(quads.todo), delegate: sortB(quads.delegate), eliminate: sortB(quads.eliminate) }
   };
@@ -1559,6 +1603,8 @@ function wireTodo(dateKey) {
     h.addEventListener('pointerdown', e => startDrag(e, h.dataset.drag)));
   content.querySelectorAll('.ord-num').forEach(inp =>
     inp.addEventListener('change', e => { e.stopPropagation(); reorderTo(inp.dataset.ord, inp.dataset.q, parseInt(inp.value, 10) || 1); }));
+  content.querySelectorAll('[data-open]').forEach(el =>
+    el.addEventListener('click', e => { e.stopPropagation(); openTaskPanel(el.dataset.open); }));
   renderAddTaskBar();
 }
 function rerenderTodo() {
@@ -1607,14 +1653,13 @@ function deleteTask(id) {
 // Reorder within a bucket by typing a 1-based position.
 function reorderTo(id, q, newPos) {
   const c = computeTodo(digestDateKey);
-  const bucket = (q === 'quick') ? c.quick : (q === 'recap') ? c.recap : (c.quads[q] || null);
+  const bucket = (q === 'quick') ? c.quick : (c.quads[q] || null);
   if (!bucket) return;
   const ids = bucket.map(t => t.id).filter(x => x !== id);
   const pos = Math.max(1, Math.min(newPos, ids.length + 1)) - 1;
   ids.splice(pos, 0, id);
   const ov = getTS(digestDateKey).overrides;
-  // 'recap' membership comes from the task's source, not an override — don't pin it as a quadrant.
-  if (q !== 'recap') (ov[id] = ov[id] || {}).quadrant = q;
+  (ov[id] = ov[id] || {}).quadrant = q;   // pin it to this bucket
   ids.forEach((tid, i) => { (ov[tid] = ov[tid] || {}).order = i; });
   commitTasks();
 }
@@ -1631,6 +1676,104 @@ function dropTask(id, targetQ, beforeId) {
   if (pos < 0) arr.push(id); else arr.splice(pos, 0, id);
   arr.forEach((tid, i) => { (ov[tid] = ov[tid] || {}).order = i; });
   commitTasks();
+}
+
+// ── Task detail sidebar ───────────────────────────────────────────────────────
+let panelTaskId = null;
+
+function findTask(id) { return (computeTodo(digestDateKey).tasks || []).find(t => t.id === id) || null; }
+
+function closeTaskPanel() {
+  panelTaskId = null;
+  document.getElementById('taskpanel').classList.add('hidden');
+  document.getElementById('tp-backdrop').classList.add('hidden');
+}
+
+function openTaskPanel(id) {
+  const t = findTask(id);
+  if (!t) return;
+  panelTaskId = id;
+  document.getElementById('tp-backdrop').classList.remove('hidden');
+  const el = document.getElementById('taskpanel');
+  el.classList.remove('hidden');
+  el.innerHTML = renderTaskPanel(t);
+  el.scrollTop = 0;
+  wireTaskPanel();
+}
+
+function renderTaskPanel(t) {
+  const subs = t.subtasks || [];
+  const done = subs.filter(s => isSubDone(t.id, s.id)).length;
+  const pct  = subs.length ? Math.round(done / subs.length * 100) : 0;
+  const r    = t.recapRef || null;
+
+  const chips = [
+    t.source ? `<span class="src">${esc(sourceLabel(t.source))}</span>` : '',
+    (t.durationMin != null) ? `<span class="dur">~${t.durationMin}m</span>` : '',
+    t.verification ? `<span class="vbadge vbadge-${t.verification}">${vbadgeLabel(t.verification)}</span>` : ''
+  ].filter(Boolean).join('');
+
+  let h = `<button class="tp-close" data-tp-close aria-label="Close">✕</button>
+    <div class="tp-kicker">Task</div>
+    <div class="tp-title">${esc(t.title || '')}</div>
+    ${t.dueDate ? `<div class="due-line"><span class="due-badge">⏰ Due ${esc(formatDue(t.dueDate))}</span></div>` : ''}
+    ${chips ? `<div class="tp-chips">${chips}</div>` : ''}`;
+
+  if (t.body || t.detail) h += `<div class="tp-body">${t.body || t.detail}</div>`;
+  h += scheduleRow(t, digestDateKey);
+
+  if (r) {
+    const when = r.sentOn ? formatDue(r.sentOn) : '';
+    h += `<div class="tp-ref"><strong>From recap email</strong><br>${esc(r.subject || '(no subject)')}`
+       + (when ? `<br>Sent ${esc(when)}` : '')
+       + (r.to && r.to.length ? `<br>To: ${esc(r.to.join(', '))}` : '')
+       + `</div>`;
+  }
+
+  if (subs.length) {
+    h += `<div class="tp-sec">Subtasks · ${done}/${subs.length}</div>
+      <div class="tp-prog"><i style="width:${pct}%"></i></div>`;
+    h += subs.map(s => {
+      const d = isSubDone(t.id, s.id);
+      return `<label class="tp-sub${d ? ' done' : ''}">
+        <input type="checkbox" data-sub="${esc(s.id)}"${d ? ' checked' : ''}>
+        <span class="tp-sub-txt">${esc(s.text || '')}${s.evidence ? `<span class="tp-sub-ev">${esc(s.evidence)}</span>` : ''}</span>
+      </label>`;
+    }).join('');
+  } else {
+    h += `<div class="tp-sec">Subtasks</div><div class="ob-hint">No subtasks on this task.</div>`;
+  }
+  return h;
+}
+
+function wireTaskPanel() {
+  const el = document.getElementById('taskpanel');
+  el.querySelectorAll('[data-tp-close]').forEach(b => b.addEventListener('click', closeTaskPanel));
+  el.querySelectorAll('input[data-sub]').forEach(inp =>
+    inp.addEventListener('change', () => toggleSubtask(panelTaskId, inp.dataset.sub, inp.checked)));
+}
+
+// Toggle a subtask; when every subtask is done the parent auto-completes (and un-completes if reopened).
+async function toggleSubtask(taskId, subId, on) {
+  if (on) subState[subKey(taskId, subId)] = true; else delete subState[subKey(taskId, subId)];
+
+  const t = findTask(taskId);
+  const subs = (t && t.subtasks) || [];
+  const allDone = subs.length > 0 && subs.every(s => isSubDone(taskId, s.id));
+  const parentDone = isDone(digestDateKey, taskId);
+
+  if (allDone !== parentDone) {
+    if (!state[digestDateKey]) state[digestDateKey] = {};
+    state[digestDateKey][taskId] = allDone;
+    logComplete(taskId, (t && t.title) || '', digestDateKey, allDone);
+    await saveState();
+    await saveDoneFile(digestDateKey);
+    await saveCompletedLog();
+  }
+
+  await saveSubState();
+  rerenderTodo();
+  if (panelTaskId && findTask(panelTaskId)) openTaskPanel(panelTaskId); else closeTaskPanel();
 }
 
 // ── Drag and drop (pointer-based; works on touch + mouse) ─────────────────────
@@ -2060,6 +2203,9 @@ async function saveDoneFile(dateKey) {
     console.error('Could not save done file:', e);
   }
 }
+
+document.getElementById('tp-backdrop').addEventListener('click', closeTaskPanel);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTaskPanel(); });
 
 init();
 </script>
