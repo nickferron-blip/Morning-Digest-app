@@ -276,8 +276,11 @@
     .sub-chip { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 20px;
                 background: #eef2ff; color: #4338ca; cursor: pointer; }
     @media (prefers-color-scheme: dark) { .sub-chip { background: #1e1b4b; color: #a5b4fc; } }
-    .ttl-open { cursor: pointer; }
-    .ttl-open:hover { text-decoration: underline; }
+    /* Card body = open details; title + checkbox = complete. */
+    .ai { cursor: pointer; }
+    .ai .ttl, .ai .chk { cursor: pointer; }
+    .ai .ttl:hover { text-decoration: underline; text-decoration-color: var(--muted);
+                     text-underline-offset: 3px; }
 
     /* Per-task collapsible detail (legacy, unused) */
     .task-det { margin-top: 5px; }
@@ -465,7 +468,7 @@
       <div>
         <div class="hdr-title" id="hdr-title">Morning Digest</div>
         <div class="hdr-sub" id="hdr-date">Loading…</div>
-        <div class="hdr-build" id="hdr-build">build 2026-10-02a</div>
+        <div class="hdr-build" id="hdr-build">build 2026-10-02b</div>
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn-refresh" onclick="refresh()">↻ Refresh</button>
@@ -971,7 +974,7 @@ function renderTaskRow(item, dateKey, ydState, pos, bucket, collapsible) {
     <span class="drag-h" data-drag="${esc(item.id)}" aria-hidden="true">⠿</span>
     <div class="chk"></div>
     <div class="it">
-      <div class="ttl"><span class="ttl-open" data-open="${esc(item.id)}">${esc(item.title || '')}</span>${carried ? '<span class="carry">Carried over</span>' : ''}${vbadge}</div>
+      <div class="ttl" title="Click the title to mark this done">${esc(item.title || '')}${carried ? '<span class="carry">Carried over</span>' : ''}${vbadge}</div>
       ${item.dueDate ? `<div class="due-line"><span class="due-badge">⏰ Due ${esc(formatDue(item.dueDate))}</span></div>` : ''}
       ${subChip ? `<div class="task-meta">${subChip}</div>` : ''}
       ${detailBlock}
@@ -1606,10 +1609,18 @@ function computeTodo(dateKey) {
 // ── Wiring (run after every To-Do render) ─────────────────────────────────────
 function wireTodo(dateKey) {
   const content = document.getElementById('content');
+  // Card body opens the detail panel; the title and the checkbox complete the task.
   content.querySelectorAll('.ai[data-id]').forEach(el => {
     if (isDone(dateKey, el.dataset.id)) el.classList.add('done');
-    el.addEventListener('click', () => { if (justDragged) return; toggle(dateKey, el.dataset.id, el); });
+    el.addEventListener('click', () => { if (justDragged) return; openTaskPanel(el.dataset.id); });
   });
+  content.querySelectorAll('.ai .ttl, .ai .chk').forEach(el =>
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      if (justDragged) return;
+      const row = el.closest('.ai[data-id]');
+      if (row) toggle(dateKey, row.dataset.id, row);
+    }));
   content.querySelectorAll('.ai details, .ai a, .ai button, .ai .drag-h, .ai input').forEach(el =>
     el.addEventListener('click', e => e.stopPropagation()));
   content.querySelectorAll('[data-menu]').forEach(btn =>
