@@ -36,6 +36,13 @@ Installed to the iPhone home screen, opened morning and end-of-day.
 }
 ```
 
+**Recap `body` format (Aug 31, 2026 — fixed contract, `eod-meeting-recaps` skill):** every recap body follows the same four-part shape, always in this order:
+1. Greeting — "Hello everyone," if more than 2 external attendees; "Hello [Name] and [Name]," (or "Hello [Name],") if 2 or fewer. Counts external (non-@mely.ai) attendees only.
+2. A short one-line recap (no header).
+3. `Key Discussion Points` — bullets.
+4. `Decisions` — bullets.
+5. `Action Items` — bullets, each prefixed with an owner tag (`Mely:` or the client's short name). **The morning-digest skill (`client-state/SKILL-updated.md`, Step 1b) parses this exact "Action Items" section to pull Nick's own todos** — don't rename the section or drop the owner-tag prefix without updating that skill too.
+
 ## Sections in a digest
 `overdue`, `critical`, `today`, `tomorrow`, plus email / calendar / client / Teams groupings (see CSS classes `sh-ovr`, `sh-crit`, `sh-tod`, `sh-tmrw`, `sh-eml`, `sh-cal`, `sh-cli`, `sh-teams`).
 

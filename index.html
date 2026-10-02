@@ -394,6 +394,17 @@
     .task-menu-btn { flex-shrink: 0; align-self: flex-start; background: none; border: none; color: var(--muted);
                      font-size: 18px; line-height: 1; padding: 0 4px; cursor: pointer; border-radius: 6px; }
     .task-menu-btn:hover { background: var(--bg); }
+    .hdr-build { font-size: 9px; opacity: .45; letter-spacing: .04em; margin-top: 2px; }
+    /* Always-visible "open details" control — the only reliable way in on touch,
+       where the title text is too small a target and a near-miss checks the task off. */
+    .task-open-btn { flex-shrink: 0; align-self: flex-start; background: var(--bg); color: var(--muted);
+                     border: 1px solid var(--border); font-size: 13px; line-height: 1; cursor: pointer;
+                     width: 26px; height: 26px; border-radius: 7px; padding: 0; }
+    .task-open-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .task-open-btn.has-subs { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }
+    @media (prefers-color-scheme: dark) {
+      .task-open-btn.has-subs { background: #1e1b4b; color: #a5b4fc; border-color: #312e81; }
+    }
     .ai.dragging-src { opacity: .3; }
     .quad.drop-target, .section.drop-target { outline: 2px dashed var(--accent); outline-offset: -2px; }
     .drag-ghost { position: fixed; z-index: 1200; pointer-events: none; opacity: .95;
@@ -454,6 +465,7 @@
       <div>
         <div class="hdr-title" id="hdr-title">Morning Digest</div>
         <div class="hdr-sub" id="hdr-date">Loading…</div>
+        <div class="hdr-build" id="hdr-build">build 2026-10-02a</div>
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn-refresh" onclick="refresh()">↻ Refresh</button>
@@ -964,6 +976,9 @@ function renderTaskRow(item, dateKey, ydState, pos, bucket, collapsible) {
       ${subChip ? `<div class="task-meta">${subChip}</div>` : ''}
       ${detailBlock}
     </div>
+    <button class="task-open-btn${subs.length ? ' has-subs' : ''}" data-open="${esc(item.id)}"
+            aria-label="Open task details${subs.length ? ` — ${subs.length} subtasks` : ''}"
+            title="Open details">›</button>
     <button class="task-menu-btn" data-menu="${esc(item.id)}" aria-label="Task actions">⋯</button>
   </div>`;
 }
@@ -1689,15 +1704,18 @@ function closeTaskPanel() {
   document.getElementById('tp-backdrop').classList.add('hidden');
 }
 
-function openTaskPanel(id) {
+// keepScroll: true when re-rendering the panel in place (e.g. after a subtask tick) —
+// resetting scrollTop there throws the user back to the top of a long subtask list.
+function openTaskPanel(id, keepScroll) {
   const t = findTask(id);
   if (!t) return;
+  const el = document.getElementById('taskpanel');
+  const y  = (keepScroll && panelTaskId === id) ? el.scrollTop : 0;
   panelTaskId = id;
   document.getElementById('tp-backdrop').classList.remove('hidden');
-  const el = document.getElementById('taskpanel');
   el.classList.remove('hidden');
   el.innerHTML = renderTaskPanel(t);
-  el.scrollTop = 0;
+  el.scrollTop = y;
   wireTaskPanel();
 }
 
@@ -1773,7 +1791,7 @@ async function toggleSubtask(taskId, subId, on) {
 
   await saveSubState();
   rerenderTodo();
-  if (panelTaskId && findTask(panelTaskId)) openTaskPanel(panelTaskId); else closeTaskPanel();
+  if (panelTaskId && findTask(panelTaskId)) openTaskPanel(panelTaskId, true); else closeTaskPanel();
 }
 
 // ── Drag and drop (pointer-based; works on touch + mouse) ─────────────────────
