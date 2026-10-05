@@ -273,6 +273,39 @@
     .tp-sub input { margin-top: 2px; flex-shrink: 0; }
     .tp-sub.done > .tp-sub-txt { color: var(--muted); text-decoration: line-through; }
     .tp-sub-ev { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; text-decoration: none; }
+    /* ── Status + inline editing ─────────────────────────────── */
+    .tp-status { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tp-st { font-size: 11px; font-weight: 600; padding: 5px 11px; border-radius: 20px; cursor: pointer;
+             background: var(--bg); color: var(--muted); border: 1px solid var(--border); font-family: inherit; }
+    .tp-st.on { box-shadow: inset 0 0 0 1px currentColor; }
+    .tp-st.st-doing.on   { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+    .tp-st.st-waiting.on { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+    .tp-st.st-blocked.on { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+    .st-badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 7px;
+                border-radius: 20px; margin-left: 6px; vertical-align: middle; }
+    .st-badge.st-doing   { background: #eff6ff; color: #1d4ed8; }
+    .st-badge.st-waiting { background: #fffbeb; color: #b45309; }
+    .st-badge.st-blocked { background: #fef2f2; color: #b91c1c; }
+    .ai.st-row-waiting, .ai.st-row-blocked { opacity: .72; }
+    @media (prefers-color-scheme: dark) {
+      .tp-st.st-doing.on   { background: #0c1e3e; color: #93c5fd; border-color: #1e3a8a; }
+      .tp-st.st-waiting.on { background: #1c1400; color: #fcd34d; border-color: #78350f; }
+      .tp-st.st-blocked.on { background: #200f0f; color: #fca5a5; border-color: #7f1d1d; }
+      .st-badge.st-doing   { background: #0c1e3e; color: #93c5fd; }
+      .st-badge.st-waiting { background: #1c1400; color: #fcd34d; }
+      .st-badge.st-blocked { background: #200f0f; color: #fca5a5; }
+    }
+    .tp-title[data-edit], .tp-body[data-edit] { cursor: text; border-radius: 6px; }
+    .tp-title[data-edit]:hover, .tp-body[data-edit]:hover { background: var(--bg); box-shadow: 0 0 0 4px var(--bg); }
+    .tp-edit-ta { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 13px;
+                  line-height: 1.5; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px;
+                  background: var(--card); color: var(--text); resize: vertical; margin: 4px 0; }
+    .tp-sub-row { display: flex; align-items: flex-start; gap: 4px; border-bottom: 1px solid var(--border); }
+    .tp-sub-row:last-child { border-bottom: none; }
+    .tp-sub-row .tp-sub { flex: 1; border-bottom: none; }
+    .tp-sub-edit { flex-shrink: 0; align-self: center; background: none; border: none; color: var(--muted);
+                   font-size: 13px; cursor: pointer; padding: 4px 6px; border-radius: 6px; opacity: .5; }
+    .tp-sub-edit:hover { opacity: 1; background: var(--bg); }
     .sub-chip { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 20px;
                 background: #eef2ff; color: #4338ca; cursor: pointer; }
     @media (prefers-color-scheme: dark) { .sub-chip { background: #1e1b4b; color: #a5b4fc; } }
@@ -468,7 +501,7 @@
       <div>
         <div class="hdr-title" id="hdr-title">Morning Digest</div>
         <div class="hdr-sub" id="hdr-date">Loading…</div>
-        <div class="hdr-build" id="hdr-build">build 2026-10-02b</div>
+        <div class="hdr-build" id="hdr-build">build 2026-10-05a</div>
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn-refresh" onclick="refresh()">↻ Refresh</button>
@@ -673,6 +706,54 @@ async function saveCompletedLog() {
 }
 // ── Subtask state ────────────────────────────────────────────────────────────
 function subKey(taskId, subId) { return `${taskId}::${subId}`; }
+
+// ── Task edits (title / description / status / subtask text) ──────────────────
+// Keyed by TASK ID, not by date: the digest is regenerated every morning and the
+// skill carries unfinished todos forward under their original ids, so a per-date
+// store (like tasksState) would silently drop every edit overnight.
+const EDITS_URI = `/me/drive/root:/${FOLDER}/Done/task-edits.json:/content`;
+let taskEdits = {};
+
+const STATUSES = {
+  doing:   { label: 'In progress', cls: 'st-doing' },
+  waiting: { label: 'Waiting',     cls: 'st-waiting' },
+  blocked: { label: 'Blocked',     cls: 'st-blocked' }
+};
+
+async function loadTaskEdits() {
+  try {
+    const raw = await graph('GET', EDITS_URI);
+    const j = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {};
+    taskEdits = (j && typeof j === 'object') ? j : {};
+  } catch { taskEdits = {}; }
+}
+async function saveTaskEdits() {
+  try { await graph('PUT', EDITS_URI, JSON.stringify(taskEdits)); }
+  catch (e) { console.error('Could not save task edits:', e); }
+}
+function getEdit(id) { return taskEdits[id] || (taskEdits[id] = {}); }
+
+// Overlay the user's edits on a task from the digest. Returns a COPY so the
+// underlying digestData stays pristine and clearing an edit restores the original.
+// Digest-generated bodies carry markup and render as HTML; anything the user typed
+// is plain text and must be escaped before it goes back into innerHTML.
+function bodyHtml(t) {
+  const raw = t.body || t.detail || '';
+  return t.bodyIsText ? esc(raw).replace(/\n/g, '<br>') : raw;
+}
+
+function applyEdits(t) {
+  const e = taskEdits[t.id];
+  if (!e) return t;
+  const out = { ...t };
+  if (e.title != null) out.title = e.title;
+  if (e.body  != null) { out.body = e.body; out.bodyIsText = true; if (!e.body) out.detail = ''; }
+  if (e.status) out.status = e.status;
+  if (e.subs && out.subtasks) {
+    out.subtasks = out.subtasks.map(s => e.subs[s.id] != null ? { ...s, text: e.subs[s.id] } : s);
+  }
+  return out;
+}
 function isSubDone(taskId, subId) { return !!subState[subKey(taskId, subId)]; }
 async function loadSubState() {
   try {
@@ -759,6 +840,7 @@ async function loadDigest() {
     await loadOnboarding();
     await loadCompletedLog();
     await loadSubState();
+    await loadTaskEdits();
 
     digestData    = data;
     digestDateKey = dateKey;
@@ -954,8 +1036,10 @@ function scheduleRow(item, dateKey) {
 // Carries a drag handle (⠿) and a ⋯ menu button for moving/reordering/deleting.
 function renderTaskRow(item, dateKey, ydState, pos, bucket, collapsible) {
   const carried  = item.carried || (ydState.hasOwnProperty(item.id) && !ydState[item.id]);
-  const bodyText = item.body || item.detail || '';
+  const bodyText = bodyHtml(item);
   const vbadge   = item.verification ? `<span class="vbadge vbadge-${item.verification}">${vbadgeLabel(item.verification)}</span>` : '';
+  const stb      = (item.status && STATUSES[item.status])
+    ? `<span class="st-badge ${STATUSES[item.status].cls}">${STATUSES[item.status].label}</span>` : '';
   const src      = item.source ? `<span class="src">${esc(sourceLabel(item.source))}</span>` : '';
   const dur      = (item.durationMin != null) ? `<span class="dur">~${item.durationMin}m</span>` : '';
   const meta     = (src || dur) ? `<div class="task-meta">${src}${dur}</div>` : '';
@@ -969,12 +1053,12 @@ function renderTaskRow(item, dateKey, ydState, pos, bucket, collapsible) {
     ? `<span class="sub-chip" data-open="${esc(item.id)}">☑ ${subDone}/${subs.length} subtasks</span>`
     : '';
   const detailBlock = `${bodyText ? `<div class="dtl">${bodyText}</div>` : ''}${meta}${sched}`;
-  return `<div class="ai" data-id="${esc(item.id)}" data-title="${esc(item.title || '')}">
+  return `<div class="ai${item.status ? ` st-row-${item.status}` : ''}" data-id="${esc(item.id)}" data-title="${esc(item.title || '')}">
     ${ordInput}
     <span class="drag-h" data-drag="${esc(item.id)}" aria-hidden="true">⠿</span>
     <div class="chk"></div>
     <div class="it">
-      <div class="ttl" title="Click the title to mark this done">${esc(item.title || '')}${carried ? '<span class="carry">Carried over</span>' : ''}${vbadge}</div>
+      <div class="ttl" title="Click the title to mark this done">${esc(item.title || '')}${carried ? '<span class="carry">Carried over</span>' : ''}${stb}${vbadge}</div>
       ${item.dueDate ? `<div class="due-line"><span class="due-badge">⏰ Due ${esc(formatDue(item.dueDate))}</span></div>` : ''}
       ${subChip ? `<div class="task-meta">${subChip}</div>` : ''}
       ${detailBlock}
@@ -1581,7 +1665,7 @@ function computeTodo(dateKey) {
   const s  = (digestData && digestData.sections) || {};
   const ts = getTS(dateKey);
   const ov = ts.overrides;
-  let tasks = collectTasks(s).concat(ts.manual);
+  let tasks = collectTasks(s).concat(ts.manual).map(applyEdits);
   tasks = tasks.filter(t => !(ov[t.id] && ov[t.id].deleted));
   const doneKeys = completedKeySet();
   tasks = tasks.filter(t => {
@@ -1742,13 +1826,22 @@ function renderTaskPanel(t) {
     t.verification ? `<span class="vbadge vbadge-${t.verification}">${vbadgeLabel(t.verification)}</span>` : ''
   ].filter(Boolean).join('');
 
+  const statusBtns = Object.entries(STATUSES).map(([k, v]) =>
+    `<button class="tp-st ${v.cls}${t.status === k ? ' on' : ''}" data-status="${k}">${v.label}</button>`
+  ).join('');
+
   let h = `<button class="tp-close" data-tp-close aria-label="Close">✕</button>
     <div class="tp-kicker">Task</div>
-    <div class="tp-title">${esc(t.title || '')}</div>
+    <div class="tp-title" data-edit="title" title="Click to edit">${esc(t.title || '')}</div>
     ${t.dueDate ? `<div class="due-line"><span class="due-badge">⏰ Due ${esc(formatDue(t.dueDate))}</span></div>` : ''}
-    ${chips ? `<div class="tp-chips">${chips}</div>` : ''}`;
+    ${chips ? `<div class="tp-chips">${chips}</div>` : ''}
+    <div class="tp-sec">Status</div>
+    <div class="tp-status">${statusBtns}<button class="tp-st tp-st-clear${!t.status ? ' on' : ''}" data-status="">None</button></div>`;
 
-  if (t.body || t.detail) h += `<div class="tp-body">${t.body || t.detail}</div>`;
+  h += `<div class="tp-sec">Description</div>
+        <div class="tp-body" data-edit="body" title="Click to edit">${
+          (t.body || t.detail) ? bodyHtml(t) : '<span class="ob-hint">Click to add a description.</span>'
+        }</div>`;
   h += scheduleRow(t, digestDateKey);
 
   if (r) {
@@ -1762,12 +1855,17 @@ function renderTaskPanel(t) {
   if (subs.length) {
     h += `<div class="tp-sec">Subtasks · ${done}/${subs.length}</div>
       <div class="tp-prog"><i style="width:${pct}%"></i></div>`;
+    // The checkbox lives in a <label> so tapping the text still ticks it; the pencil
+    // sits OUTSIDE that label, otherwise clicking it would toggle the checkbox too.
     h += subs.map(s => {
       const d = isSubDone(t.id, s.id);
-      return `<label class="tp-sub${d ? ' done' : ''}">
-        <input type="checkbox" data-sub="${esc(s.id)}"${d ? ' checked' : ''}>
-        <span class="tp-sub-txt">${esc(s.text || '')}${s.evidence ? `<span class="tp-sub-ev">${esc(s.evidence)}</span>` : ''}</span>
-      </label>`;
+      return `<div class="tp-sub-row">
+        <label class="tp-sub${d ? ' done' : ''}">
+          <input type="checkbox" data-sub="${esc(s.id)}"${d ? ' checked' : ''}>
+          <span class="tp-sub-txt">${esc(s.text || '')}${s.evidence ? `<span class="tp-sub-ev">${esc(s.evidence)}</span>` : ''}</span>
+        </label>
+        <button class="tp-sub-edit" data-edit-sub="${esc(s.id)}" aria-label="Edit subtask" title="Edit">✎</button>
+      </div>`;
     }).join('');
   } else {
     h += `<div class="tp-sec">Subtasks</div><div class="ob-hint">No subtasks on this task.</div>`;
@@ -1780,6 +1878,79 @@ function wireTaskPanel() {
   el.querySelectorAll('[data-tp-close]').forEach(b => b.addEventListener('click', closeTaskPanel));
   el.querySelectorAll('input[data-sub]').forEach(inp =>
     inp.addEventListener('change', () => toggleSubtask(panelTaskId, inp.dataset.sub, inp.checked)));
+  el.querySelectorAll('[data-status]').forEach(b =>
+    b.addEventListener('click', () => setTaskStatus(panelTaskId, b.dataset.status)));
+  el.querySelectorAll('[data-edit]').forEach(n =>
+    n.addEventListener('click', () => startEdit(n, n.dataset.edit)));
+  el.querySelectorAll('[data-edit-sub]').forEach(b =>
+    b.addEventListener('click', () => {
+      const row = b.closest('.tp-sub-row');
+      startEdit(row.querySelector('.tp-sub-txt'), 'sub', b.dataset.editSub);
+    }));
+}
+
+async function setTaskStatus(id, status) {
+  if (!id) return;
+  const e = getEdit(id);
+  if (status) e.status = status; else delete e.status;
+  await saveTaskEdits();
+  rerenderTodo();
+  openTaskPanel(id, true);
+}
+
+// Swap a rendered node for a textarea; Enter (or blur) commits, Escape cancels.
+function startEdit(node, field, subId) {
+  if (!node || node.dataset.editing) return;
+  const id = panelTaskId;
+  const t  = findTask(id);
+  if (!t) return;
+
+  let current = '';
+  if (field === 'title') current = t.title || '';
+  else if (field === 'body') current = stripTags(t.body || t.detail || '');
+  else { const s = (t.subtasks || []).find(x => x.id === subId); current = (s && s.text) || ''; }
+
+  node.dataset.editing = '1';
+  const ta = document.createElement('textarea');
+  ta.className = 'tp-edit-ta';
+  ta.value = current;
+  ta.rows = field === 'body' ? 5 : 2;
+  node.replaceWith(ta);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+
+  let settled = false;
+  const commit = async (save) => {
+    if (settled) return;
+    settled = true;
+    if (save) {
+      const v = ta.value.trim();
+      const e = getEdit(id);
+      if (field === 'title') { if (v) e.title = v; else delete e.title; }
+      else if (field === 'body') { e.body = v; }
+      else { (e.subs = e.subs || {})[subId] = v; }
+      if (!Object.keys(e).length) delete taskEdits[id];
+      await saveTaskEdits();
+      rerenderTodo();
+    }
+    // Re-render to restore the original node — but only if the panel is still on this
+    // task. Dismissing the panel mid-edit blurs the textarea, and reopening here would
+    // fight the user's close.
+    if (panelTaskId === id) openTaskPanel(id, true);
+  };
+  ta.addEventListener('blur', () => commit(true));
+  ta.addEventListener('keydown', e => {
+    // stopPropagation matters: the document-level Escape handler closes the whole
+    // panel, so without it cancelling an edit would also dismiss the task.
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); commit(false); }
+    if (e.key === 'Enter' && !e.shiftKey && field !== 'body') { e.preventDefault(); commit(true); }
+  });
+}
+
+function stripTags(html) {
+  const d = document.createElement('div');
+  d.innerHTML = html;
+  return (d.textContent || '').trim();
 }
 
 // Toggle a subtask; when every subtask is done the parent auto-completes (and un-completes if reopened).
