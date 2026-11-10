@@ -413,3 +413,107 @@ Added **Step 1b** to the generating skill (`Daily json files/client-state/SKILL-
 New todo `source` value: `"recap"`. `index.html`'s `sourceLabel()` now maps it to "Recap email" for the source chip.
 
 **Not yet done:** the Scheduled-task wrapper (`Claude Main Folder/Scheduled/morning-digest-with-client-state/SKILL.md`) just defers to `client-state/SKILL-updated.md`, so no change was needed there — but this session didn't have that folder mounted to double check its exact wording. If recap todos don't show up after the next run, verify the wrapper still says "follow the procedure in SKILL-updated.md" and hasn't drifted.
+
+---
+
+## 12. Oct–Nov 2026 — source enforcement, status, inline editing
+
+Three working sessions. All of it is in `index.html` (commits `dbb1a94`, `30bff63`, `ee71119`) plus
+the live skill at `Daily json files/client-state/SKILL-updated.md`.
+
+### Build stamp — check this first when something "didn't work"
+
+The header now carries a small `build YYYY-MM-DDx` line under the date. **Current: `2026-10-05a`.**
+If the app looks stale, read that stamp before debugging anything — iOS home-screen PWAs cache
+`index.html` aggressively. `…/Morning-Digest-app/?v=N` breaks the cache.
+
+**The Pages URL is case-sensitive:** `https://nickferron-blip.github.io/Morning-Digest-app/` works;
+the all-lowercase spelling 404s.
+
+### Non-recap todos were leaking in — fixed in the skill, not the app
+
+The Oct 2 digest had 13 todos; **only 3 were legitimate.** The other 10 came from tl;dv notes and
+Inbox email, even though the skill already said recap-only.
+
+**Root cause: two rules in conflict.** Step 0 carry-forward says "never drop an unfinished todo";
+Step 6b's source audit says "delete anything not from a recap". Those tasks predated the recap-only
+rule, so carry-forward resurrected them every single morning.
+
+Fixed by making the **source audit outrank carry-forward** (new subsection in Step 0, and point 3 of
+Step 6b). A carried-in todo that isn't `recap`-with-`recapRef` or `flagged`-with-`flagRef` is
+deleted and **not** written to `completed-log.json` — it was never completed.
+
+### Second automatic source: flagged Outlook mail
+
+Step 1c. Nick flags a message in Outlook and it becomes a todo with `source: "flagged"` and a
+`flagRef` (subject, from, receivedOn, messageId) for dedupe.
+
+⚠️ **The gotcha, and an earlier wrong answer.** This step originally said to watch a mail folder
+named `Tasks`, because flag status looked unreachable. That was wrong and the folder was never
+created. Flag status **is** available — but only from `read_resource`, never from
+`outlook_email_search`:
+
+```
+read_resource(mail:///messages/<id>)  →  "flag": { "flagStatus": "flagged" | "notFlagged" | "complete" }
+```
+
+So the scan is list-then-read, one full message read per candidate. Corrected 2026-11-10 in both
+`SKILL-updated.md` Step 1c and the `Scheduled/morning-digest-with-client-state/SKILL.md` wrapper.
+`"complete"` (flag ticked off in Outlook) is a **skip, not a completion** — the app owns completion.
+
+### Task row clicks were inverted
+
+Previously the whole row completed the task and only the title text opened the detail panel — the
+two most obvious targets did the opposite of what they looked like. Now:
+
+| Click | Does |
+|---|---|
+| Title, checkbox | Marks done (click again to undo) |
+| Anywhere else on the card, or the `›` button | Opens the detail panel |
+| `⋯` menu, Add to Outlook | Their own thing (stopPropagation) |
+
+Every row has a dedicated **`›` open button**, tinted when the task has subtasks. The title alone
+was never a usable touch target: a near-miss completed the task.
+
+### Status + inline editing (`Done/task-edits.json`)
+
+Tasks carry a status — **In progress / Waiting / Blocked / None** — set from the detail panel, shown
+as a badge on the card. Waiting and Blocked dim the row so a parked task stops competing for
+attention in its quadrant.
+
+Title, description and subtask text are all editable: click the title or description in the panel,
+or the pencil beside a subtask. Enter commits, Shift+Enter newlines, Escape cancels, blur saves.
+
+**These edits live in `Done/task-edits.json`, keyed by TASK ID, not by date.** This matters: the
+digest is regenerated every morning and unfinished todos are carried forward under their original
+ids, so the per-date `digest-tasks.json` store (where quadrant/MIT/order overrides live) would have
+thrown every edit away overnight. `applyEdits()` overlays them onto a **copy** of the digest task,
+so `digestData` stays pristine and clearing an edit restores the original text.
+
+User-typed descriptions are escaped on render (`bodyIsText`); digest-generated bodies still render
+as trusted HTML.
+
+### Two bugs found while testing the panel — worth not reintroducing
+
+1. `toggleSubtask` re-rendered the panel through `openTaskPanel()`, which reset `scrollTop` to 0.
+   Ticking anything below the fold threw you back to the top of the list. `openTaskPanel` now takes
+   `keepScroll`.
+2. **Escape inside an inline edit bubbled to the document-level Escape handler and closed the whole
+   panel** instead of just cancelling the edit. Needs `e.stopPropagation()`. Same class of bug:
+   dismissing the panel mid-edit blurred the textarea, whose commit reopened the panel the user had
+   just closed — `commit()` now only re-renders if the panel is still on that task.
+
+### Testing without a browser or Node
+
+Node isn't available on this machine, and the live app can't be checked with WebFetch (it strips JS).
+What works: copy `index.html` to a throwaway file, replace the MSAL `import` with a stub class,
+append a `graph()` override that serves a real digest from `Daily json files/`, serve it with
+`python3 -m http.server`, and drive it with the browser tools. That caught both bugs above and
+verified the full subtask → parent auto-complete flow against real data. **Delete the throwaway file
+before committing.**
+
+### Status of this app as of Nov 10 2026
+
+Live and unchanged at build `2026-10-05a`. A replacement candidate — **My Control Tower**, an
+Artifact with a durable-task data model — was built Nov 10 and runs in parallel; see
+[CONTROL-TOWER.md](CONTROL-TOWER.md). Nothing here was altered for it. Both crons run independently.
